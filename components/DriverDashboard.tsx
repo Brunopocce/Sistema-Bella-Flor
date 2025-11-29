@@ -532,7 +532,12 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
                     disabled={isCanceling}
                     className="w-full bg-red-600 text-white font-bold py-2.5 rounded-lg hover:bg-red-700 transition-colors shadow-sm flex items-center justify-center gap-2"
                   >
-                    {isCanceling ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Sim, Cancelar'}
+                    {isCanceling ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Cancelando...
+                      </>
+                    ) : 'Sim, Cancelar'}
                   </button>
                 </div>
               </div>

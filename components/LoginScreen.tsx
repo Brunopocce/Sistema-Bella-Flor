@@ -17,12 +17,15 @@ export const LoginScreen: React.FC = () => {
     // Admin: 236616
     // Driver Padrão: 123456
     // Everton: 996408466
+    // Thiago: 988020221
     if (password === '236616') {
       email = 'admin@bellaflor.com';
     } else if (password === '123456') {
       email = 'driver@bellaflor.com';
     } else if (password === '996408466') {
       email = 'everton@bellaflor.com.br';
+    } else if (password === '988020221') {
+      email = 'thiago@bellaflor.com.br';
     } else {
       setError('Senha incorreta.');
       setLoading(false);
@@ -38,13 +41,19 @@ export const LoginScreen: React.FC = () => {
       // Auto-Sign Up logic for first time use or database reset
       if (signInError.message.includes('Invalid login credentials')) {
          console.log("Tentando auto-cadastro...");
+         
+         let name = 'Administrador';
+         if (email.includes('everton')) name = 'Everton';
+         else if (email.includes('thiago')) name = 'Thiago';
+         else if (email.includes('driver')) name = 'Entregador';
+
          const { error: signUpError } = await supabase.auth.signUp({
             email,
             password,
             options: {
                 data: {
                     role: email.includes('admin') ? 'admin' : 'driver',
-                    name: email.includes('everton') ? 'Everton' : (email.includes('driver') ? 'Entregador' : 'Administrador')
+                    name: name
                 }
             }
          });
@@ -91,7 +100,7 @@ export const LoginScreen: React.FC = () => {
                 />
                 <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
                   {/* Ícone muda baseado na senha digitada */}
-                  {(password === '123456' || password === '996408466') ? <Truck className="w-5 h-5 text-brand-500" /> : <Lock className="w-5 h-5" />}
+                  {(password === '123456' || password === '996408466' || password === '988020221') ? <Truck className="w-5 h-5 text-brand-500" /> : <Lock className="w-5 h-5" />}
                 </div>
               </div>
             </div>

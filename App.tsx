@@ -45,7 +45,7 @@ function App() {
     const email = session.user.email;
     
     // Força a role 'driver' para emails conhecidos de entregadores
-    if (email === 'everton@bellaflor.com.br' || email === 'driver@bellaflor.com') {
+    if (email === 'everton@bellaflor.com.br' || email === 'driver@bellaflor.com' || email === 'thiago@bellaflor.com.br') {
         return 'driver';
     }
     
@@ -55,6 +55,7 @@ function App() {
   const resolveDriverName = (email?: string) => {
     if (!email) return 'Motorista';
     if (email === 'everton@bellaflor.com.br') return 'Everton';
+    if (email === 'thiago@bellaflor.com.br') return 'Thiago';
     if (email === 'driver@bellaflor.com') return 'Entregador Padrão';
     return email.split('@')[0]; // Fallback para parte do email
   };
@@ -309,7 +310,21 @@ function App() {
         // 5. Sucesso: Substitui o ID temporário pelo ID real do banco no estado
         // Isso previne erros se o usuário tentar cancelar logo em seguida
         const realDelivery = data[0];
-        setDeliveries(prev => prev.map(d => d.id === tempId ? realDelivery : d));
+        setDeliveries(prev => {
+            // VERIFICAÇÃO DE SEGURANÇA:
+            // Se o item tempId não estiver mais na lista 'prev', significa que o usuário
+            // clicou em "Cancelar" ENQUANTO a requisição 'insert' estava rodando.
+            // O 'handleCancelDelivery' removeu o tempId da UI, mas o banco acabou de criar o registro.
+            // Para evitar o "fantasma", devemos deletar o registro real imediatamente.
+            const exists = prev.some(d => d.id === tempId);
+            if (!exists) {
+                console.warn(`[Ghost Delivery Fix] ID temporário ${tempId} não encontrado. Deletando ID real ${realDelivery.id} recém criado.`);
+                supabase.from('deliveries').delete().eq('id', realDelivery.id).then();
+                return prev;
+            }
+            // Caso normal: troca o ID temporário pelo real
+            return prev.map(d => d.id === tempId ? realDelivery : d);
+        });
     }
   };
 
@@ -345,9 +360,8 @@ function App() {
     setDeliveries(prev => prev.filter(d => d.id !== deliveryId));
 
     // Se for ID negativo (otimista que ainda não sincronizou), paramos aqui.
-    // O item já foi removido da tela. Se a requisição de inserção anterior falhar, tudo bem.
-    // Se a requisição de inserção tiver sucesso depois, o Realtime/Polling trará o item de volta,
-    // mas isso é melhor do que tentar deletar um ID que não existe no banco.
+    // O item já foi removido da tela. A lógica no handleStartDelivery lidará com a limpeza
+    // se o insert terminar depois.
     if (deliveryId < 0) return;
 
     // 2. Remoção no Banco
