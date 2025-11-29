@@ -775,6 +775,7 @@ function App() {
               icon={DollarSign}
               colorClass="text-emerald-600 bg-emerald-100"
               subValue={`${stats.salesCount} pedidos`}
+              layout="col"
             />
             <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 flex flex-col justify-center hover:shadow-md transition-all">
               <div className="flex items-center space-x-3 mb-4">
@@ -817,19 +818,10 @@ function App() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-8">
-            <section>
-              <h2 className="text-xl font-bold text-gray-800 mb-4 px-1">Vendas</h2>
-              <SalesForm onAddSale={handleAddSale} />
-              <SalesList sales={sales} onDelete={handleDeleteSale} onUpdate={handleUpdateSale} />
-            </section>
-          </div>
-          <div className="space-y-6">
-            <PaymentForm onAddPayment={handleAddPayment} />
-            <PaymentList payments={payments} onDelete={handleDeletePayment} />
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+          <div className="space-y-6 lg:col-span-1 lg:order-1 order-2">
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-              <div className="px-5 py-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+              <div className="px-5 py-4 border-b border-gray-100 bg-gray-50 relative flex items-center justify-center">
                 <div className="flex items-center gap-2">
                     <div className="relative">
                         <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
@@ -838,12 +830,9 @@ function App() {
                         </span>
                         <Bike className="w-5 h-5 text-gray-700" />
                     </div>
-                    <h3 className="font-bold text-gray-800">Monitoramento de Entregas</h3>
+                    <h3 className="font-bold text-gray-800">Monitoramento</h3>
                 </div>
-                <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium px-2 py-1 bg-white border rounded text-gray-500">
-                        Tempo Real
-                    </span>
+                <div className="absolute right-5 flex items-center gap-2">
                     <button 
                         onClick={manualRefreshDeliveries}
                         disabled={isRefreshingDeliveries}
@@ -941,6 +930,17 @@ function App() {
                   )}
               </div>
             </div>
+
+            <PaymentForm onAddPayment={handleAddPayment} />
+            <PaymentList payments={payments} onDelete={handleDeletePayment} />
+          </div>
+
+          <div className="lg:col-span-3 space-y-8 lg:order-2 order-1">
+            <section>
+              <h2 className="text-xl font-bold text-gray-800 mb-4 px-1">Vendas</h2>
+              <SalesForm onAddSale={handleAddSale} />
+              <SalesList sales={sales} onDelete={handleDeleteSale} onUpdate={handleUpdateSale} />
+            </section>
           </div>
         </div>
       </main>
