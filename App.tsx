@@ -141,10 +141,15 @@ function App() {
     }
   };
 
-  const handleUpdateSale = async (id: number, newValue: number, newDeliveryFee: number, justification: string) => {
+  const handleUpdateSale = async (id: number, newValue: number, newDeliveryFee: number, justification: string, newOrderId: string) => {
     const { data, error } = await supabase
       .from('sales')
-      .update({ value: newValue, delivery_fee: newDeliveryFee, justification })
+      .update({ 
+        value: newValue, 
+        delivery_fee: newDeliveryFee, 
+        justification,
+        order_id: newOrderId 
+      })
       .eq('id', id)
       .select();
       

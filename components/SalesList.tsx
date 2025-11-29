@@ -5,7 +5,7 @@ import { Sale } from '../types';
 interface SalesListProps {
   sales: Sale[];
   onDelete: (id: number) => Promise<void>;
-  onUpdate: (id: number, newValue: number, newDeliveryFee: number, justification: string) => Promise<void>;
+  onUpdate: (id: number, newValue: number, newDeliveryFee: number, justification: string, newOrderId: string) => Promise<void>;
 }
 
 export const SalesList: React.FC<SalesListProps> = ({ sales, onDelete, onUpdate }) => {
@@ -20,6 +20,7 @@ export const SalesList: React.FC<SalesListProps> = ({ sales, onDelete, onUpdate 
   const [editRawValue, setEditRawValue] = useState('');
   const [editRawDeliveryFee, setEditRawDeliveryFee] = useState('');
   const [editJustification, setEditJustification] = useState('');
+  const [editOrderId, setEditOrderId] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
   const formatCurrency = (val: number) => 
@@ -88,6 +89,7 @@ export const SalesList: React.FC<SalesListProps> = ({ sales, onDelete, onUpdate 
     setEditRawValue(rawValue);
     setEditRawDeliveryFee(rawDelivery);
     setEditJustification(sale.justification || '');
+    setEditOrderId(sale.order_id || '');
     setIsEditModalOpen(true);
   };
 
@@ -117,7 +119,7 @@ export const SalesList: React.FC<SalesListProps> = ({ sales, onDelete, onUpdate 
         return;
       }
       
-      await onUpdate(saleToEdit.id, newValue, newDeliveryFee, editJustification);
+      await onUpdate(saleToEdit.id, newValue, newDeliveryFee, editJustification, editOrderId);
       setIsEditModalOpen(false);
       setSaleToEdit(null);
       setIsSaving(false);
@@ -238,6 +240,17 @@ export const SalesList: React.FC<SalesListProps> = ({ sales, onDelete, onUpdate 
             </div>
             
             <form onSubmit={handleSaveEdit} className="p-6 space-y-4">
+               <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">Nº do Pedido</label>
+                  <input
+                    type="text"
+                    value={editOrderId}
+                    onChange={(e) => setEditOrderId(e.target.value)}
+                    placeholder="Ex: 123"
+                    className="w-full px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-900 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none font-medium text-lg"
+                  />
+               </div>
+
                <div>
                   <label className="block text-sm font-bold text-gray-700 mb-1">Valor da Venda (R$)</label>
                   <input
