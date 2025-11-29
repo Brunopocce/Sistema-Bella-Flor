@@ -25,7 +25,6 @@ interface AddressSuggestion {
 
 // Custom hook to get previous value of a prop or state
 function usePrevious<T>(value: T) {
-  // FIX: `useRef<T>()` requires an initial value when a generic type is provided. Initializing with `undefined` and adjusting the ref's type to `T | undefined` to solve the error.
   const ref = useRef<T | undefined>(undefined);
   useEffect(() => {
     ref.current = value;
@@ -102,7 +101,6 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [wrapperRef]);
 
-  // Se a entrega focada sair da lista (foi concluída ou cancelada), fecha o modo foco
   useEffect(() => {
     if (focusedDeliveryId && !activeDeliveries.find(d => d.id === focusedDeliveryId)) {
         setFocusedDeliveryId(null);
@@ -119,7 +117,6 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
       if (data.erro || !isCityAllowed(data.localidade)) {
         setSuggestions([]);
       } else {
-        // Correção aplicada: usar 'logradouro' em vez de 'logouro'
         const displayNameParts = [data.logradouro, data.bairro, data.localidade, data.uf].filter(Boolean);
         const suggestion: AddressSuggestion = {
           place_id: data.cep,
@@ -192,9 +189,9 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
         const mainText = road || suburb;
         let secondaryText = '';
 
-        if (mainText === road && suburb) { // Main text is street, so show suburb and city in secondary
+        if (mainText === road && suburb) {
             secondaryText = `${suburb}, ${city} (CEP: ${postcode})`;
-        } else { // Main text is suburb, so just show city in secondary
+        } else {
             secondaryText = `${city} (CEP: ${postcode})`;
         }
         
@@ -209,7 +206,7 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
     return { main, secondary };
   };
 
-  const handleAddToRoute = async () => {
+  const handleAddToRoute = () => {
     if (!addressQuery || !orderId) return alert("Preencha o número do pedido e o endereço.");
     if (isSubmitting) return;
 
@@ -217,14 +214,13 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
     const fullDestination = streetNumber ? `${addressQuery}, ${streetNumber}` : addressQuery;
     const feeValue = deliveryFee ? parseInt(deliveryFee) / 100 : 0;
     
-    try {
-        await onStartDelivery(orderId, fullDestination, feeValue);
-        setOrderId(''); setAddressQuery(''); setStreetNumber(''); setDeliveryFee(''); setIsFormOpen(false);
-    } catch (error) {
-        console.error("Error adding to route:", error);
-    } finally {
-        setIsSubmitting(false);
-    }
+    // Fire and forget (não esperamos o banco responder para liberar a tela)
+    onStartDelivery(orderId, fullDestination, feeValue).catch(err => console.error(err));
+    
+    // Reset imediato da interface
+    setOrderId(''); setAddressQuery(''); setStreetNumber(''); setDeliveryFee(''); 
+    setIsFormOpen(false);
+    setIsSubmitting(false);
   };
 
   const openCancelModal = (delivery: Delivery) => {
@@ -248,23 +244,16 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
     const destination = encodeURIComponent(delivery.address);
     const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
 
-    // Detecta Android
     if (/android/i.test(userAgent)) {
-      // Usa o esquema 'google.navigation:' para abrir o app diretamente no modo navegação
       window.location.href = `google.navigation:q=${destination}`;
     } 
-    // Detecta iOS (iPhone/iPad)
     else if (/iPad|iPhone|iPod/.test(userAgent) && !(window as any).MSStream) {
-      // Tenta abrir o app do Google Maps diretamente (esquema comgooglemaps://)
       window.location.href = `comgooglemaps://?daddr=${destination}&directionsmode=driving`;
     } 
-    // Desktop ou Outros
     else {
-      // Fallback para web
       window.open(`https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=driving`, '_blank');
     }
     
-    // 2. Ativa o "Modo Foco" no app para quando o usuário voltar
     setFocusedDeliveryId(delivery.id);
   };
 
@@ -287,7 +276,6 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
     ]);
     const date = new Date().toLocaleDateString('pt-BR');
     
-    // Calculate total fees
     const totalFees = todaysDeliveries.reduce((acc, curr) => acc + (curr.delivery_fee || 0), 0);
     
     doc.text(`Relatório de Entregas - ${date} - ${driverName}`, 14, 20);
@@ -309,9 +297,6 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
       }
   };
 
-  // --- RENDER ---
-
-  // 1. MODO FOCO (Overlay de Tela Cheia)
   if (focusedDelivery) {
       return (
           <div className="fixed inset-0 z-50 bg-white flex flex-col animate-in fade-in duration-300">
@@ -359,7 +344,6 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
       );
   }
 
-  // 2. DASHBOARD PADRÃO
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">

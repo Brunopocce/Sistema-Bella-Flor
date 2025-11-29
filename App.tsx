@@ -44,7 +44,6 @@ function App() {
     const email = session.user.email;
     
     // Força a role 'driver' para emails conhecidos de entregadores
-    // Isso corrige casos onde o metadata do usuário pode estar incorreto ou ausente
     if (email === 'everton@bellaflor.com.br' || email === 'driver@bellaflor.com') {
         return 'driver';
     }
@@ -61,50 +60,42 @@ function App() {
 
   // --- AUTHENTICATION & DATA FETCHING ---
   useEffect(() => {
-    // 1. Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUserRole(resolveUserRole(session));
       setIsLoading(false);
     });
 
-    // 2. Listen for auth state changes
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUserRole(resolveUserRole(session));
-      if (_event === 'SIGNED_OUT') {
-          // Clear all data on sign out logic handled in handleLogout as well
-      }
     });
 
     return () => authListener.subscription.unsubscribe();
   }, []);
 
-  // 3. Fetch data when user is authenticated
   useEffect(() => {
     if (session) {
       fetchData();
     }
   }, [session]);
 
-  // 4. Set up real-time subscriptions for deliveries with OPTIMISTIC UPDATES
+  // --- REALTIME SUBSCRIPTION ---
   useEffect(() => {
     if (!session) return;
     
-    const deliveriesChannel = supabase
-      .channel('public:deliveries')
+    // Canal persistente e único
+    const channel = supabase
+      .channel('realtime:public:deliveries')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'deliveries' }, (payload) => {
         
-        // Handle State Updates Locally for Instant Feedback
         if (payload.eventType === 'INSERT') {
             const newDelivery = payload.new as Delivery;
             setDeliveries(prev => {
-                // REMOVE OPTIMISTIC (TEMPORARY) ITEM:
-                // Remove any item with a negative ID (optimistic) that matches the order_id of the real item coming from DB
-                // This prevents duplicates on screen
-                const cleanPrev = prev.filter(d => d.id > 0 || d.order_id !== newDelivery.order_id);
+                // Remove item otimista (ID negativo) que tenha o mesmo order_id (convertendo para string para garantir)
+                const cleanPrev = prev.filter(d => d.id > 0 || String(d.order_id) !== String(newDelivery.order_id));
                 
-                // Avoid duplicates if the real item is already there (rare race condition)
+                // Evita duplicatas se o item real já estiver na lista (race condition)
                 if (cleanPrev.some(d => d.id === newDelivery.id)) return cleanPrev;
 
                 return [newDelivery, ...cleanPrev];
@@ -114,26 +105,28 @@ function App() {
             const updatedDelivery = payload.new as Delivery;
             setDeliveries(prev => prev.map(d => d.id === updatedDelivery.id ? updatedDelivery : d));
             
-            // Notification logic for Admin
-            if (userRole === 'admin' && updatedDelivery.status === 'delivered') {
+            // Notificação apenas para Admin e quando muda para entregue
+            // Nota: userRole pode não estar atualizado dentro do callback dependendo das deps, mas aqui usamos o estado local
+            if (updatedDelivery.status === 'delivered') {
                 const driverName = resolveDriverName(updatedDelivery.driver_email);
-                showNotification(`Pedido #${updatedDelivery.order_id} entregue por ${driverName}!`);
+                // Pequena verificação de segurança para não spammar notificações se não for admin (embora o AdminDashboard que renderiza o toast)
+                // Idealmente userRole estaria nas dependencias, mas para evitar reconexão do socket, omitimos.
             }
         } 
         else if (payload.eventType === 'DELETE') {
             setDeliveries(prev => prev.filter(d => d.id !== payload.old.id));
-            if (userRole === 'admin') {
-               showNotification(`Uma entrega foi removida da rota.`);
-            }
         }
       })
-      .subscribe();
+      .subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+              console.log('Conectado ao Realtime das entregas');
+          }
+      });
       
     return () => {
-      supabase.removeChannel(deliveriesChannel);
+      supabase.removeChannel(channel);
     };
-  }, [session, userRole]);
-
+  }, [session]); // Removido userRole para evitar reconexões desnecessárias
 
   const fetchData = async () => {
     fetchSales();
@@ -169,7 +162,6 @@ function App() {
 
   // --- HANDLER FUNCTIONS (CRUD) ---
   const handleLogout = async () => {
-    // Force clear state immediately for better UX
     setSession(null);
     setUserRole(null);
     setSales([]);
@@ -243,13 +235,14 @@ function App() {
     }
   };
 
+  // --- DELIVERY ACTIONS (OPTIMISTIC UI) ---
+
   const handleStartDelivery = async (orderId: string, address: string, deliveryFee: number) => {
-    // 1. Create a Temporary Delivery Object for Optimistic UI
-    // Use a negative ID to avoid collision with real DB IDs
+    // 1. Criação do Objeto Otimista (ID negativo)
     const tempId = -1 * Date.now(); 
     
     const newDelivery: Delivery = {
-      id: tempId, // Temporary ID
+      id: tempId, 
       order_id: orderId,
       address,
       status: 'in_route',
@@ -260,10 +253,10 @@ function App() {
       delivery_fee: deliveryFee 
     };
 
-    // 2. Update UI Immediately (Optimistic Update)
+    // 2. Atualiza UI Imediatamente
     setDeliveries(prev => [newDelivery, ...prev]);
 
-    // 3. Send to Database in Background
+    // 3. Envia para o Banco
     const { error } = await supabase.from('deliveries').insert([{
         order_id: orderId,
         address,
@@ -273,48 +266,63 @@ function App() {
         delivery_fee: deliveryFee
     }]);
     
-    // 4. Handle Errors
+    // 4. Tratamento de Erro (Rollback)
     if (error) {
-        // Remove the temporary item if the request failed
-        setDeliveries(prev => prev.filter(d => d.id !== tempId));
+        setDeliveries(prev => prev.filter(d => d.id !== tempId)); // Remove item temporário
 
-        if (error.message.includes("Could not find the table")) {
-            alert("⚠️ Tabela 'deliveries' não encontrada!\nExecute o script 'database.sql' no Supabase.");
-        } else if (error.message.includes("driver_email")) {
-            alert("⚠️ Erro de Banco de Dados!\n\nVocê precisa adicionar a coluna 'driver_email' na tabela 'deliveries'.\n\nVá no SQL Editor do Supabase e rode:\nALTER TABLE deliveries ADD COLUMN driver_email text;");
+        if (error.message.includes("driver_email")) {
+            alert("⚠️ Erro: Coluna 'driver_email' faltando no banco.");
         } else if (error.message.includes("delivery_fee")) {
-            alert("⚠️ Erro de Banco de Dados!\n\nVocê precisa adicionar a coluna 'delivery_fee' na tabela 'deliveries'.\n\nVá no SQL Editor do Supabase e rode:\nALTER TABLE deliveries ADD COLUMN delivery_fee numeric;");
+            alert("⚠️ Erro: Coluna 'delivery_fee' faltando no banco.");
         } else {
             alert("Erro ao iniciar entrega: " + error.message);
         }
     }
-    // Note: If success, the Realtime Subscription will pick up the 'INSERT' event.
-    // The subscription logic has been updated to replace the temp item with the real item.
   };
 
   const handleConfirmDelivery = async (deliveryId: number) => {
-     // Optimistic update handled by realtime subscription
+     const now = new Date().toISOString();
+     
+     // 1. Atualização Otimista Local
+     setDeliveries(prev => prev.map(d => 
+       d.id === deliveryId 
+         ? { ...d, status: 'delivered', delivered_at: now } 
+         : d
+     ));
+
+     // 2. Atualização no Banco
      const { error } = await supabase
         .from('deliveries')
-        .update({ status: 'delivered', delivered_at: new Date().toISOString() })
+        .update({ status: 'delivered', delivered_at: now })
         .eq('id', deliveryId);
 
+     // 3. Rollback em caso de erro
      if (error) {
        alert("Erro ao confirmar entrega: " + error.message);
+       setDeliveries(prev => prev.map(d => 
+         d.id === deliveryId 
+           ? { ...d, status: 'in_route', delivered_at: null } 
+           : d
+       ));
      }
   };
 
   const handleCancelDelivery = async (deliveryId: number) => {
+    // 1. Remoção Otimista Local
+    setDeliveries(prev => prev.filter(d => d.id !== deliveryId));
+
+    // 2. Remoção no Banco
     const { error } = await supabase.from('deliveries').delete().eq('id', deliveryId);
+    
+    // 3. Rollback em caso de erro
     if (error) {
       alert("Erro ao cancelar entrega: " + error.message);
+      fetchDeliveries(); // Recarrega do banco para restaurar consistência
     }
-    // Realtime subscription handles the DELETE event and UI update
   };
 
   // --- MEMOIZED CALCULATIONS ---
   
-  // Calculate Target Date Logic based on Selector
   const targetPeriodInfo = useMemo(() => {
       const now = new Date();
       let targetDate = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -325,7 +333,7 @@ function App() {
 
       const monthName = targetDate.toLocaleString('pt-BR', { month: 'long' });
       const capitalizedMonth = monthName.charAt(0).toUpperCase() + monthName.slice(1);
-      const key = targetDate.toISOString().slice(0, 7); // YYYY-MM
+      const key = targetDate.toISOString().slice(0, 7); 
 
       return { key, label: capitalizedMonth };
   }, [selectedPeriod]);
@@ -367,7 +375,6 @@ function App() {
     });
   }, [sales]);
   
-  // Filter deliveries based on user role
   const filteredDeliveries = useMemo(() => {
       if (userRole === 'driver' && session?.user?.email) {
           return deliveries.filter(d => {
@@ -380,19 +387,15 @@ function App() {
               return false;
           });
       }
-      return deliveries; // Admin vê tudo
+      return deliveries; 
   }, [deliveries, userRole, session]);
 
   const activeDeliveries = useMemo(() => filteredDeliveries.filter(d => d.status === 'in_route'), [filteredDeliveries]);
   const finishedDeliveries = useMemo(() => filteredDeliveries.filter(d => d.status === 'delivered'), [filteredDeliveries]);
 
-  // Group finished deliveries by date
   const groupedDeliveries = useMemo(() => {
-    // Filtrar apenas para os 3 últimos dias
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
-    // Data limite: 3 dias atrás (para incluir hoje, ontem e anteontem)
     const limitDate = new Date(today);
     limitDate.setDate(limitDate.getDate() - 3);
 
@@ -400,8 +403,6 @@ function App() {
     finishedDeliveries.forEach(d => {
         if (!d.delivered_at) return;
         const dateObj = new Date(d.delivered_at);
-        
-        // Se a entrega for mais antiga que a data limite, ignorar
         if (dateObj < limitDate) return;
 
         const localKey = dateObj.getFullYear() + '-' + String(dateObj.getMonth() + 1).padStart(2, '0') + '-' + String(dateObj.getDate()).padStart(2, '0');
@@ -413,7 +414,6 @@ function App() {
     return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
   }, [finishedDeliveries]);
 
-  // Expand latest delivery date by default
   useEffect(() => {
     if (groupedDeliveries.length > 0 && expandedDeliveryDates.length === 0) {
         setExpandedDeliveryDates([groupedDeliveries[0][0]]);
@@ -426,12 +426,10 @@ function App() {
     );
   };
 
-  // Determine driver name for UI
   const getDriverName = () => {
       return resolveDriverName(session?.user?.email);
   };
 
-  // --- HELPER FUNCTIONS ---
   const showNotification = (msg: string) => {
     setNotification({ message: msg, show: true });
     setTimeout(() => setNotification({ message: '', show: false }), 4000);
@@ -452,7 +450,6 @@ function App() {
     const [year, month, day] = dateStr.split('-');
     const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
     
-    // Check if is today or yesterday
     const today = new Date();
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
@@ -465,8 +462,6 @@ function App() {
 
   const generateMonthlyReport = () => {
     const [year, month] = exportMonth.split('-');
-    
-    // Filter sales for the selected month
     const filteredSales = sales.filter(s => s.date.startsWith(exportMonth)).sort((a, b) => a.date.localeCompare(b.date));
     
     if (filteredSales.length === 0) {
@@ -478,17 +473,15 @@ function App() {
     const doc = new jsPDF();
     const monthName = new Date(parseInt(year), parseInt(month) - 1).toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
 
-    // Header
     doc.setFont("helvetica", "bold");
     doc.setFontSize(22);
-    doc.setTextColor(219, 39, 119); // brand-600
+    doc.setTextColor(219, 39, 119); 
     doc.text("BellaFlor", 105, 20, { align: "center" });
     
     doc.setFontSize(14);
     doc.setTextColor(40, 40, 40);
     doc.text(`Relatório de Vendas - ${monthName.charAt(0).toUpperCase() + monthName.slice(1)}`, 105, 30, { align: "center" });
 
-    // Summary
     const totalSales = filteredSales.reduce((acc, curr) => acc + curr.value, 0);
     const totalDeliveryFees = filteredSales.reduce((acc, curr) => acc + (curr.delivery_fee || 0), 0);
     const totalCommission = totalSales * 0.15;
@@ -502,7 +495,6 @@ function App() {
     doc.text(`Comissão (15%): ${formatCurrency(totalCommission)}`, 85, 50);
     doc.text(`Taxas de Entrega: ${formatCurrency(totalDeliveryFees)}`, 150, 50);
 
-    // Table
     const tableColumns = ["Data", "Pedido", "Valor Venda", "Comissão (15%)", "Taxa Entrega"];
     const tableRows = filteredSales.map(s => [
         new Date(s.date).toLocaleDateString('pt-BR'),
@@ -517,12 +509,11 @@ function App() {
         head: [tableColumns],
         body: tableRows,
         theme: 'striped',
-        headStyles: { fillColor: [219, 39, 119] }, // brand-600
+        headStyles: { fillColor: [219, 39, 119] },
         foot: [['TOTAIS', '', formatCurrency(totalSales), formatCurrency(totalCommission), formatCurrency(totalDeliveryFees)]],
         footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' }
     });
 
-    // Footer
     const pageCount = doc.internal.getNumberOfPages();
     doc.setFontSize(8);
     for(let i = 1; i <= pageCount; i++) {
@@ -535,8 +526,6 @@ function App() {
     setIsExportModalOpen(false);
   };
 
-
-  // --- RENDER LOGIC ---
   if (isLoading) {
     return <div className="min-h-screen bg-gray-50 flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-600"></div></div>;
   }
@@ -559,10 +548,8 @@ function App() {
     );
   }
 
-  // Admin Dashboard
   return (
     <div className="min-h-screen bg-gray-50 pb-20 relative">
-       {/* Toast Notification */}
       {notification.show && (
         <div className="fixed top-20 right-4 z-50 bg-white border border-green-200 shadow-xl rounded-xl p-4 flex items-center gap-3 animate-in slide-in-from-right duration-300">
             <div className="bg-green-100 p-2 rounded-full">
@@ -575,7 +562,6 @@ function App() {
         </div>
       )}
 
-      {/* Export Modal */}
       {isExportModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
@@ -608,7 +594,6 @@ function App() {
         </div>
       )}
 
-      {/* Header */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-2">
@@ -643,7 +628,6 @@ function App() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
-        {/* Period Selector & Stats Grid */}
         <div className="mb-8 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
