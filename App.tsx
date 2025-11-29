@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { DollarSign, Wallet, LayoutDashboard, FileText, Calendar, LogOut, Bike, MapPin, CheckCircle2, Clock, X, Download, User } from 'lucide-react';
+import { DollarSign, Wallet, LayoutDashboard, FileText, Calendar, LogOut, Bike, MapPin, CheckCircle2, Clock, X, Download, User, ChevronDown, ChevronRight, ArrowLeftRight } from 'lucide-react';
 import { SalesForm } from './components/SalesForm';
 import { SalesList } from './components/SalesList';
 import { PaymentForm } from './components/PaymentForm';
@@ -29,10 +29,14 @@ function App() {
   
   // UI states
   const [notification, setNotification] = useState<{message: string, show: boolean}>({ message: '', show: false });
+  const [selectedPeriod, setSelectedPeriod] = useState<'current' | 'previous'>('current');
   
   // Export Modal State
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportMonth, setExportMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
+
+  // State for Delivery Accordion
+  const [expandedDeliveryDates, setExpandedDeliveryDates] = useState<string[]>([]);
 
   // --- HELPER TO RESOLVE ROLE ---
   const resolveUserRole = (session: Session | null): UserRole | null => {
@@ -305,22 +309,46 @@ function App() {
   };
 
   // --- MEMOIZED CALCULATIONS ---
+  
+  // Calculate Target Date Logic based on Selector
+  const targetPeriodInfo = useMemo(() => {
+      const now = new Date();
+      let targetDate = new Date(now.getFullYear(), now.getMonth(), 1);
+
+      if (selectedPeriod === 'previous') {
+          targetDate.setMonth(targetDate.getMonth() - 1);
+      }
+
+      const monthName = targetDate.toLocaleString('pt-BR', { month: 'long' });
+      const capitalizedMonth = monthName.charAt(0).toUpperCase() + monthName.slice(1);
+      const key = targetDate.toISOString().slice(0, 7); // YYYY-MM
+
+      return { key, label: capitalizedMonth };
+  }, [selectedPeriod]);
+
   const stats: SummaryStats = useMemo(() => {
-    const totalSales = sales.reduce((acc, curr) => acc + curr.value, 0);
+    const targetKey = targetPeriodInfo.key;
+
+    const periodSales = sales.filter(s => s.date.startsWith(targetKey));
+    const periodPayments = payments.filter(p => p.date.startsWith(targetKey));
+
+    const totalSales = periodSales.reduce((acc, curr) => acc + curr.value, 0);
     const commissionPerPerson = totalSales * 0.075;
-    const paidBruno = payments.filter(p => p.person === 'Bruno').reduce((acc, curr) => acc + curr.value, 0);
-    const paidDaniele = payments.filter(p => p.person === 'Daniele').reduce((acc, curr) => acc + curr.value, 0);
+    
+    const paidBruno = periodPayments.filter(p => p.person === 'Bruno').reduce((acc, curr) => acc + curr.value, 0);
+    const paidDaniele = periodPayments.filter(p => p.person === 'Daniele').reduce((acc, curr) => acc + curr.value, 0);
+    
     return {
       totalSales,
       totalCommission: totalSales * 0.15,
       commissionPerPerson,
-      salesCount: sales.length,
+      salesCount: periodSales.length,
       paidBruno,
       paidDaniele,
       balanceBruno: commissionPerPerson - paidBruno,
       balanceDaniele: commissionPerPerson - paidDaniele
     };
-  }, [sales, payments]);
+  }, [sales, payments, targetPeriodInfo]);
 
   const monthlyComparison = useMemo(() => {
     const grouped: Record<string, number> = {};
@@ -354,6 +382,46 @@ function App() {
   const activeDeliveries = useMemo(() => filteredDeliveries.filter(d => d.status === 'in_route'), [filteredDeliveries]);
   const finishedDeliveries = useMemo(() => filteredDeliveries.filter(d => d.status === 'delivered'), [filteredDeliveries]);
 
+  // Group finished deliveries by date
+  const groupedDeliveries = useMemo(() => {
+    // Filtrar apenas para os 3 últimos dias
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Data limite: 3 dias atrás (para incluir hoje, ontem e anteontem)
+    const limitDate = new Date(today);
+    limitDate.setDate(limitDate.getDate() - 3);
+
+    const groups: Record<string, Delivery[]> = {};
+    finishedDeliveries.forEach(d => {
+        if (!d.delivered_at) return;
+        const dateObj = new Date(d.delivered_at);
+        
+        // Se a entrega for mais antiga que a data limite, ignorar
+        if (dateObj < limitDate) return;
+
+        const localKey = dateObj.getFullYear() + '-' + String(dateObj.getMonth() + 1).padStart(2, '0') + '-' + String(dateObj.getDate()).padStart(2, '0');
+        
+        if (!groups[localKey]) groups[localKey] = [];
+        groups[localKey].push(d);
+    });
+
+    return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [finishedDeliveries]);
+
+  // Expand latest delivery date by default
+  useEffect(() => {
+    if (groupedDeliveries.length > 0 && expandedDeliveryDates.length === 0) {
+        setExpandedDeliveryDates([groupedDeliveries[0][0]]);
+    }
+  }, [groupedDeliveries.length]);
+
+  const toggleDeliveryDate = (dateKey: string) => {
+    setExpandedDeliveryDates(prev => 
+        prev.includes(dateKey) ? prev.filter(d => d !== dateKey) : [...prev, dateKey]
+    );
+  };
+
   // Determine driver name for UI
   const getDriverName = () => {
       return resolveDriverName(session?.user?.email);
@@ -374,6 +442,21 @@ function App() {
     if (minutes < 60) return `${minutes}m atrás`;
     const hours = Math.floor(minutes / 60);
     return `${hours}h atrás`;
+  };
+
+  const formatDateHeader = (dateStr: string) => {
+    const [year, month, day] = dateStr.split('-');
+    const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    
+    // Check if is today or yesterday
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    if (date.toDateString() === today.toDateString()) return 'Hoje';
+    if (date.toDateString() === yesterday.toDateString()) return 'Ontem';
+    
+    return date.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'long' });
   };
 
   const generateMonthlyReport = () => {
@@ -556,49 +639,71 @@ function App() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <StatCard 
-            title="Vendas Totais" 
-            value={formatCurrency(stats.totalSales)} 
-            icon={DollarSign}
-            colorClass="text-emerald-600 bg-emerald-100"
-            subValue={`${stats.salesCount} pedidos registrados`}
-          />
-          <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 flex flex-col justify-center hover:shadow-md transition-all">
-            <div className="flex items-center space-x-3 mb-4">
-              <div className="p-2 rounded-lg bg-gray-200 text-black">
-                <Calendar className="w-5 h-5 text-black" />
-              </div>
-              <p className="text-sm font-medium text-gray-500">Últimos 3 Meses (Vendas)</p>
-            </div>
-            <div className="space-y-3">
-              {monthlyComparison.length > 0 ? (
-                monthlyComparison.map((month, idx) => (
-                  <div key={idx} className="flex justify-between items-center text-sm">
-                    <span className="capitalize text-gray-600 font-medium">{month.label}</span>
-                    <span className="font-bold text-brand-600">{formatCurrency(month.value)}</span>
-                  </div>
-                ))
-              ) : (
-                <p className="text-xs text-gray-400">Sem dados suficientes</p>
-              )}
+        {/* Period Selector & Stats Grid */}
+        <div className="mb-8 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
+               Resumo: <span className="text-brand-600">{targetPeriodInfo.label}</span>
+            </h3>
+            <div className="flex bg-gray-100 p-1 rounded-lg">
+               <button 
+                 onClick={() => setSelectedPeriod('previous')}
+                 className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${selectedPeriod === 'previous' ? 'bg-white text-brand-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+               >
+                 Mês Anterior
+               </button>
+               <button 
+                 onClick={() => setSelectedPeriod('current')}
+                 className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${selectedPeriod === 'current' ? 'bg-white text-brand-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+               >
+                 Mês Atual
+               </button>
             </div>
           </div>
-          <StatCard 
-            title="Bruno (A Pagar)" 
-            value={formatCurrency(stats.balanceBruno)} 
-            icon={Wallet}
-            colorClass="text-blue-600 bg-blue-100"
-            subValue={`Total: ${formatCurrency(stats.commissionPerPerson)} | Pago: ${formatCurrency(stats.paidBruno)}`}
-          />
-          <StatCard 
-            title="Daniele (A Pagar)" 
-            value={formatCurrency(stats.balanceDaniele)} 
-            icon={Wallet}
-            colorClass="text-purple-600 bg-purple-100"
-            subValue={`Total: ${formatCurrency(stats.commissionPerPerson)} | Pago: ${formatCurrency(stats.paidDaniele)}`}
-          />
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <StatCard 
+              title={`Vendas (${targetPeriodInfo.label})`}
+              value={formatCurrency(stats.totalSales)} 
+              icon={DollarSign}
+              colorClass="text-emerald-600 bg-emerald-100"
+              subValue={`${stats.salesCount} pedidos`}
+            />
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 flex flex-col justify-center hover:shadow-md transition-all">
+              <div className="flex items-center space-x-3 mb-4">
+                <div className="p-2 rounded-lg bg-gray-200 text-black">
+                  <Calendar className="w-5 h-5 text-black" />
+                </div>
+                <p className="text-sm font-medium text-gray-500">Últimos 3 Meses</p>
+              </div>
+              <div className="space-y-3">
+                {monthlyComparison.length > 0 ? (
+                  monthlyComparison.map((month, idx) => (
+                    <div key={idx} className="flex justify-between items-center text-sm">
+                      <span className="capitalize text-gray-600 font-medium">{month.label}</span>
+                      <span className="font-bold text-brand-600">{formatCurrency(month.value)}</span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-gray-400">Sem dados suficientes</p>
+                )}
+              </div>
+            </div>
+            <StatCard 
+              title="Bruno (Saldo)" 
+              value={formatCurrency(stats.balanceBruno)} 
+              icon={Wallet}
+              colorClass="text-blue-600 bg-blue-100"
+              subValue={`Pago: ${formatCurrency(stats.paidBruno)}`}
+            />
+            <StatCard 
+              title="Daniele (Saldo)" 
+              value={formatCurrency(stats.balanceDaniele)} 
+              icon={Wallet}
+              colorClass="text-purple-600 bg-purple-100"
+              subValue={`Pago: ${formatCurrency(stats.paidDaniele)}`}
+            />
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -668,28 +773,50 @@ function App() {
                 )}
               </div>
               <div className="bg-gray-50 px-5 py-3 border-t border-gray-100">
-                  <h4 className="text-xs font-bold text-gray-500 uppercase mb-2">Últimas Entregas</h4>
-                  {finishedDeliveries.length === 0 ? (
+                  <h4 className="text-xs font-bold text-gray-500 uppercase mb-2">Últimas Entregas (3 Dias)</h4>
+                  {groupedDeliveries.length === 0 ? (
                       <p className="text-xs text-gray-400 italic">Histórico vazio.</p>
                   ) : (
-                      <ul className="space-y-2">
-                          {finishedDeliveries.slice(0, 3).map(del => (
-                              <li key={del.id} className="text-xs flex flex-col gap-1 border-b border-gray-100 last:border-0 pb-2 last:pb-0">
-                                  <div className="flex justify-between items-center">
-                                      <span className="font-bold text-gray-700">#{del.order_id}</span>
-                                      <span className="text-green-600 font-bold flex items-center gap-1">
-                                          <CheckCircle2 className="w-3 h-3" />
-                                          {new Date(del.delivered_at!).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}
-                                      </span>
+                      <div className="space-y-1">
+                          {groupedDeliveries.map(([dateKey, groupDeliveries]) => {
+                              const isExpanded = expandedDeliveryDates.includes(dateKey);
+                              return (
+                                  <div key={dateKey} className="border-b border-gray-100 last:border-0">
+                                      <div 
+                                          onClick={() => toggleDeliveryDate(dateKey)}
+                                          className="flex items-center justify-between py-2 cursor-pointer hover:bg-gray-100/50 -mx-2 px-2 rounded-md transition-colors"
+                                      >
+                                          <div className="flex items-center gap-2">
+                                              {isExpanded ? <ChevronDown className="w-3 h-3 text-gray-500" /> : <ChevronRight className="w-3 h-3 text-gray-400" />}
+                                              <span className="text-xs font-bold text-gray-600 capitalize">{formatDateHeader(dateKey)}</span>
+                                          </div>
+                                          <span className="text-[10px] font-medium bg-white border px-1.5 rounded-full text-gray-500">{groupDeliveries.length}</span>
+                                      </div>
+                                      
+                                      {isExpanded && (
+                                          <ul className="space-y-2 pb-3 pl-2">
+                                              {groupDeliveries.map(del => (
+                                                  <li key={del.id} className="text-xs flex flex-col gap-1 border-l-2 border-green-200 pl-3 py-1">
+                                                      <div className="flex justify-between items-center">
+                                                          <span className="font-bold text-gray-700">#{del.order_id}</span>
+                                                          <span className="text-green-600 font-bold flex items-center gap-1 text-[10px]">
+                                                              <CheckCircle2 className="w-3 h-3" />
+                                                              {new Date(del.delivered_at!).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}
+                                                          </span>
+                                                      </div>
+                                                      <div className="text-gray-600 break-words leading-tight text-[11px]">{del.address}</div>
+                                                      <div className="flex items-center gap-1 text-[10px] text-gray-400 mt-0.5">
+                                                          <User className="w-3 h-3" />
+                                                          {resolveDriverName(del.driver_email)}
+                                                      </div>
+                                                  </li>
+                                              ))}
+                                          </ul>
+                                      )}
                                   </div>
-                                  <div className="text-gray-600 break-words leading-tight">{del.address}</div>
-                                  <div className="flex items-center gap-1 text-[10px] text-gray-400">
-                                      <User className="w-3 h-3" />
-                                      {resolveDriverName(del.driver_email)}
-                                  </div>
-                              </li>
-                          ))}
-                      </ul>
+                              );
+                          })}
+                      </div>
                   )}
               </div>
             </div>

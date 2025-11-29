@@ -80,13 +80,13 @@ export const SalesForm: React.FC<SalesFormProps> = ({ onAddSale }) => {
             value={date}
             onChange={(e) => setDate(e.target.value)}
             style={{ colorScheme: 'light' }}
-            className="w-full px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-900 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-colors font-medium"
+            className="w-full pl-3 pr-1 py-2 rounded-lg border border-gray-300 bg-white text-gray-900 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-colors font-medium text-sm"
           />
         </div>
 
         <div className="md:col-span-1">
           <label className="block text-sm font-bold text-gray-900 mb-1">
-            Nº Pedido (Opcional)
+            Nº Pedido
           </label>
           <input
             type="text"
