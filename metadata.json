@@ -1,5 +1,7 @@
 {
   "name": "Comissão Tracker",
   "description": "Aplicativo para controle de vendas e cálculo automático de comissões de 7,5% para Bruno e Daniele.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "geolocation"
+  ]
 }

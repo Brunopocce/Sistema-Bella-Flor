@@ -6,26 +6,31 @@ import { PaymentForm } from './components/PaymentForm';
 import { PaymentList } from './components/PaymentList';
 import { StatCard } from './components/StatCard';
 import { LoginScreen } from './components/LoginScreen';
-import { Sale, SummaryStats, Payment } from './types';
+import { DriverDashboard } from './components/DriverDashboard';
+import { Sale, SummaryStats, Payment, UserRole, DeliveryLog } from './types';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 function App() {
   // Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [userRole, setUserRole] = useState<UserRole>('admin'); // Default, will be set on login
   const [isAuthChecking, setIsAuthChecking] = useState(true);
 
   // Check login status on mount
   useEffect(() => {
     const authStatus = localStorage.getItem('bellaflor_auth');
+    const role = localStorage.getItem('bellaflor_role') as UserRole;
+    
     if (authStatus === 'true') {
       setIsAuthenticated(true);
+      if (role) setUserRole(role);
     }
     setIsAuthChecking(false);
   }, []);
 
   // Initialize sales state
   const [sales, setSales] = useState<Sale[]>(() => {
-    const saved = localStorage.getItem('comissao_tracker_sales');
+    const saved = localStorage.getItem('comissao_tracker_sales_v2'); // Usando v2 para o seed
     return saved ? JSON.parse(saved) : [];
   });
 
@@ -35,10 +40,16 @@ function App() {
     return saved ? JSON.parse(saved) : [];
   });
 
+  // Initialize deliveries state
+  const [deliveries, setDeliveries] = useState<DeliveryLog[]>(() => {
+    const saved = localStorage.getItem('comissao_tracker_deliveries');
+    return saved ? JSON.parse(saved) : [];
+  });
+
   // Persist sales
   useEffect(() => {
     if (isAuthenticated) {
-      localStorage.setItem('comissao_tracker_sales', JSON.stringify(sales));
+      localStorage.setItem('comissao_tracker_sales_v2', JSON.stringify(sales));
     }
   }, [sales, isAuthenticated]);
 
@@ -49,19 +60,34 @@ function App() {
     }
   }, [payments, isAuthenticated]);
 
-  const handleLogin = () => {
+  // Persist deliveries
+  useEffect(() => {
+    if (isAuthenticated) {
+      localStorage.setItem('comissao_tracker_deliveries', JSON.stringify(deliveries));
+    }
+  }, [deliveries, isAuthenticated]);
+
+  const handleLogin = (role: UserRole) => {
     localStorage.setItem('bellaflor_auth', 'true');
+    localStorage.setItem('bellaflor_role', role);
+    setUserRole(role);
     setIsAuthenticated(true);
-    // Reload data from local storage to ensure freshness upon login
-    const savedSales = localStorage.getItem('comissao_tracker_sales');
+    
+    // Reload data
+    const savedSales = localStorage.getItem('comissao_tracker_sales_v2');
     const savedPayments = localStorage.getItem('comissao_tracker_payments');
+    const savedDeliveries = localStorage.getItem('comissao_tracker_deliveries');
+    
     if (savedSales) setSales(JSON.parse(savedSales));
     if (savedPayments) setPayments(JSON.parse(savedPayments));
+    if (savedDeliveries) setDeliveries(JSON.parse(savedDeliveries));
   };
 
   const handleLogout = () => {
     localStorage.removeItem('bellaflor_auth');
+    localStorage.removeItem('bellaflor_role');
     setIsAuthenticated(false);
+    setUserRole('admin'); // Reset to default
   };
 
   const handleAddSale = (newSaleData: Omit<Sale, 'id' | 'createdAt'>) => {
@@ -82,7 +108,6 @@ function App() {
   };
 
   const handleDeleteSale = (id: string) => {
-    // Confirmação já é feita no componente SalesList via Modal
     setSales(prev => prev.filter(s => s.id !== id));
   };
 
@@ -101,9 +126,18 @@ function App() {
     }
   };
 
+  const handleAddDelivery = (orderId: string, address: string) => {
+    const newDelivery: DeliveryLog = {
+      id: crypto.randomUUID(),
+      orderId,
+      address,
+      deliveredAt: Date.now()
+    };
+    setDeliveries(prev => [...prev, newDelivery]);
+  };
+
   // Calculate statistics
   const stats: SummaryStats = useMemo(() => {
-    // Total Sales for stats refers to the product value sum (the base for commission)
     const totalSales = sales.reduce((acc, curr) => acc + curr.value, 0);
     const totalCommission = totalSales * 0.15;
     const commissionPerPerson = totalSales * 0.075;
@@ -129,7 +163,7 @@ function App() {
     
     sales.forEach(sale => {
       const monthKey = sale.date.substring(0, 7);
-      const value = sale.value; // Changed from commission to total sales
+      const value = sale.value;
       grouped[monthKey] = (grouped[monthKey] || 0) + value;
     });
 
@@ -155,7 +189,7 @@ function App() {
 
     return Object.entries(grouped)
       .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => 0) // Keep input order if simplistic, or parse date to sort real
+      .sort((a, b) => 0) 
       .slice(-7);
   }, [sales]);
 
@@ -167,25 +201,39 @@ function App() {
       + "TIPO,Data,Nome/Pedido,Valor Venda,Taxa Entrega,Justificativa\n"
       + sales.map(s => `VENDA,${s.date},${s.orderId || '-'},${s.value},${s.deliveryFee || 0},${s.justification || ''}`).join("\n")
       + "\n"
-      + payments.map(p => `PAGAMENTO,${p.date},${p.person},${p.value},,`).join("\n");
+      + payments.map(p => `PAGAMENTO,${p.date},${p.person},${p.value},,`).join("\n")
+      + "\n"
+      + deliveries.map(d => `ENTREGA,${new Date(d.deliveredAt).toLocaleString()},${d.orderId},,,"${d.address}"`).join("\n");
     
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "relatorio_completo.csv");
+    link.setAttribute("download", "relatorio_completo_bellaflor.csv");
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
   if (isAuthChecking) {
-    return null; // or a loading spinner
+    return null;
   }
 
   if (!isAuthenticated) {
     return <LoginScreen onLogin={handleLogin} />;
   }
 
+  // --- RENDER DRIVER DASHBOARD ---
+  if (userRole === 'driver') {
+    return (
+      <DriverDashboard 
+        onLogout={handleLogout} 
+        onAddDelivery={handleAddDelivery} 
+        deliveries={deliveries}
+      />
+    );
+  }
+
+  // --- RENDER ADMIN DASHBOARD ---
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
       {/* Header */}

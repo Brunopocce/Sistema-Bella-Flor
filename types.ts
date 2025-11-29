@@ -16,6 +16,15 @@ export interface Payment {
   createdAt: number;
 }
 
+export interface DeliveryLog {
+  id: string;
+  orderId: string;
+  address: string;
+  deliveredAt: number;
+}
+
+export type UserRole = 'admin' | 'driver';
+
 export interface SummaryStats {
   totalSales: number;
   totalCommission: number; // 15%
