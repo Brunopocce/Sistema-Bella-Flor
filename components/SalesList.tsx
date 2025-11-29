@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Trash2, TrendingUp, Clock, Pencil, AlertCircle, Bike, CalendarDays } from 'lucide-react';
+import { Trash2, TrendingUp, Clock, Pencil, AlertCircle, Bike, CalendarDays, X, Save, AlertTriangle } from 'lucide-react';
 import { Sale } from '../types';
 
 interface SalesListProps {
@@ -15,9 +15,12 @@ export const SalesList: React.FC<SalesListProps> = ({ sales, onDelete, onUpdate 
   // Edit Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [saleToEdit, setSaleToEdit] = useState<Sale | null>(null);
+  
+  // Form states for editing
   const [editRawValue, setEditRawValue] = useState('');
   const [editRawDeliveryFee, setEditRawDeliveryFee] = useState('');
   const [editJustification, setEditJustification] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
   const formatCurrency = (val: number) => 
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
@@ -87,23 +90,37 @@ export const SalesList: React.FC<SalesListProps> = ({ sales, onDelete, onUpdate 
     setEditJustification(sale.justification || '');
     setIsEditModalOpen(true);
   };
+
+  const handleEditValueChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setEditRawValue(e.target.value.replace(/\D/g, ''));
+  };
+
+  const handleEditDeliveryFeeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setEditRawDeliveryFee(e.target.value.replace(/\D/g, ''));
+  };
   
   const getDisplayValue = (raw: string) => {
     if (!raw) return '';
     return (parseInt(raw) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
   };
 
-  const handleSaveEdit = async () => {
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (saleToEdit) {
+      setIsSaving(true);
       const newValue = parseInt(editRawValue) / 100;
       const newDeliveryFee = editRawDeliveryFee ? parseInt(editRawDeliveryFee) / 100 : 0;
+      
       if (isNaN(newValue) || newValue <= 0) {
         alert("Valor inválido.");
+        setIsSaving(false);
         return;
       }
+      
       await onUpdate(saleToEdit.id, newValue, newDeliveryFee, editJustification);
       setIsEditModalOpen(false);
       setSaleToEdit(null);
+      setIsSaving(false);
     }
   };
 
@@ -176,7 +193,105 @@ export const SalesList: React.FC<SalesListProps> = ({ sales, onDelete, onUpdate 
         </div>
       ))}
       
-      {/* Modals are here... */}
+      {/* Modal de Confirmação de Exclusão */}
+      {isDeleteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="p-6 text-center">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <AlertTriangle className="w-6 h-6 text-red-600" />
+              </div>
+              <h3 className="text-lg font-bold text-gray-900 mb-2">Excluir Venda?</h3>
+              <p className="text-sm text-gray-500 mb-6">
+                Essa ação não pode ser desfeita. O registro será removido permanentemente do histórico.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={cancelDelete}
+                  className="w-full bg-white border border-gray-300 text-gray-700 font-bold py-2.5 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleConfirmDelete}
+                  className="w-full bg-red-600 text-white font-bold py-2.5 rounded-lg hover:bg-red-700 transition-colors shadow-sm"
+                >
+                  Sim, Excluir
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Edição */}
+      {isEditModalOpen && saleToEdit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="bg-brand-600 px-6 py-4 flex justify-between items-center">
+               <h3 className="text-white font-bold text-lg flex items-center gap-2">
+                 <Pencil className="w-5 h-5" /> Editar Venda
+               </h3>
+               <button onClick={() => setIsEditModalOpen(false)} className="text-white/80 hover:text-white">
+                 <X className="w-5 h-5" />
+               </button>
+            </div>
+            
+            <form onSubmit={handleSaveEdit} className="p-6 space-y-4">
+               <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">Valor da Venda (R$)</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    required
+                    value={getDisplayValue(editRawValue)}
+                    onChange={handleEditValueChange}
+                    className="w-full px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-900 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none font-medium text-lg"
+                  />
+               </div>
+
+               <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">Taxa de Entrega (R$)</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={getDisplayValue(editRawDeliveryFee)}
+                    onChange={handleEditDeliveryFeeChange}
+                    className="w-full px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-900 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none font-medium text-lg"
+                  />
+               </div>
+
+               <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">Justificativa da Alteração</label>
+                  <textarea
+                    required
+                    value={editJustification}
+                    onChange={(e) => setEditJustification(e.target.value)}
+                    placeholder="Ex: Valor digitado incorretamente..."
+                    className="w-full px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-900 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none min-h-[80px]"
+                  />
+               </div>
+
+               <div className="pt-2 flex gap-3">
+                 <button
+                   type="button"
+                   onClick={() => setIsEditModalOpen(false)}
+                   className="flex-1 bg-gray-100 text-gray-700 font-bold py-3 rounded-lg hover:bg-gray-200 transition-colors"
+                 >
+                   Cancelar
+                 </button>
+                 <button
+                   type="submit"
+                   disabled={isSaving}
+                   className="flex-1 bg-brand-600 text-white font-bold py-3 rounded-lg hover:bg-brand-700 transition-colors shadow-md flex items-center justify-center gap-2"
+                 >
+                   {isSaving ? 'Salvando...' : <><Save className="w-4 h-4" /> Salvar Alterações</>}
+                 </button>
+               </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
