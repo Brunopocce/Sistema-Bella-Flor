@@ -86,21 +86,29 @@ function App() {
     fetchDeliveries();
   };
   
+  const handleDbError = (error: any) => {
+    if (error.message && error.message.includes("Could not find the table")) {
+        alert("⚠️ Configuração Necessária!\n\nAs tabelas do banco de dados ainda não foram criadas no Supabase.\n\nPor favor, copie o código do arquivo 'database.sql' e execute-o no 'SQL Editor' do painel do Supabase.");
+    } else {
+        console.error("Database error:", error);
+    }
+  };
+  
   const fetchSales = async () => {
       const { data, error } = await supabase.from('sales').select('*').order('date', { ascending: false });
-      if (error) console.error("Error fetching sales:", error);
+      if (error) handleDbError(error);
       else setSales(data || []);
   };
   
   const fetchPayments = async () => {
       const { data, error } = await supabase.from('payments').select('*').order('date', { ascending: false });
-      if (error) console.error("Error fetching payments:", error);
+      if (error) handleDbError(error);
       else setPayments(data || []);
   };
   
   const fetchDeliveries = async () => {
       const { data, error } = await supabase.from('deliveries').select('*').order('created_at', { ascending: false });
-      if (error) console.error("Error fetching deliveries:", error);
+      if (error) handleDbError(error);
       else setDeliveries(data || []);
   };
 
@@ -112,7 +120,11 @@ function App() {
   const handleAddSale = async (newSaleData: Omit<Sale, 'id' | 'created_at'>) => {
     const { data, error } = await supabase.from('sales').insert([newSaleData]).select();
     if (error) {
-      alert("Erro ao adicionar venda: " + error.message);
+      if (error.message.includes("Could not find the table")) {
+         alert("⚠️ Tabela 'sales' não encontrada!\nExecute o script 'database.sql' no Supabase.");
+      } else {
+         alert("Erro ao adicionar venda: " + error.message);
+      }
     } else if (data) {
       setSales(prev => [data[0], ...prev]);
     }
@@ -144,7 +156,11 @@ function App() {
   const handleAddPayment = async (newPaymentData: Omit<Payment, 'id' | 'created_at'>) => {
     const { data, error } = await supabase.from('payments').insert([newPaymentData]).select();
     if (error) {
-       alert("Erro ao adicionar pagamento: " + error.message);
+       if (error.message.includes("Could not find the table")) {
+         alert("⚠️ Tabela 'payments' não encontrada!\nExecute o script 'database.sql' no Supabase.");
+       } else {
+         alert("Erro ao adicionar pagamento: " + error.message);
+       }
     } else if (data) {
        setPayments(prev => [data[0], ...prev]);
     }
@@ -169,7 +185,13 @@ function App() {
       start_time: new Date().toISOString()
     };
     const { error } = await supabase.from('deliveries').insert([newDelivery]);
-    if (error) alert("Erro ao iniciar entrega: " + error.message);
+    if (error) {
+        if (error.message.includes("Could not find the table")) {
+            alert("⚠️ Tabela 'deliveries' não encontrada!\nExecute o script 'database.sql' no Supabase.");
+        } else {
+            alert("Erro ao iniciar entrega: " + error.message);
+        }
+    }
     // Realtime will update the state
   };
 
@@ -234,13 +256,29 @@ function App() {
   };
 
   const exportData = () => {
-    // ... (Implementation unchanged, but should use snake_case fields now)
+    // Basic CSV Export logic (placeholder for full implementation)
+    if (sales.length === 0) {
+        alert("Não há dados para exportar.");
+        return;
+    }
+    const headers = ["ID", "Data", "Pedido", "Valor", "Taxa Entrega", "Criado Em"];
+    const csvContent = "data:text/csv;charset=utf-8," 
+        + headers.join(",") + "\n"
+        + sales.map(e => `${e.id},${e.date},${e.order_id || ''},${e.value},${e.delivery_fee || 0},${e.created_at}`).join("\n");
+    
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "vendas_bellaflor.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
 
   // --- RENDER LOGIC ---
   if (isLoading) {
-    return <div className="min-h-screen bg-gray-50"></div>; // Or a loading spinner
+    return <div className="min-h-screen bg-gray-50 flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-600"></div></div>;
   }
 
   if (!session) {
