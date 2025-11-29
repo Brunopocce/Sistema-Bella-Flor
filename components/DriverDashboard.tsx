@@ -56,6 +56,7 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
   // Cancel Modal State
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
   const [deliveryToCancel, setDeliveryToCancel] = useState<Delivery | null>(null);
+  const [isCanceling, setIsCanceling] = useState(false);
 
   // Focus Mode State (Overlay after opening GPS)
   const [focusedDeliveryId, setFocusedDeliveryId] = useState<number | null>(null);
@@ -229,14 +230,24 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
   };
 
   const closeCancelModal = () => {
+    if (isCanceling) return; // Prevent closing while API call is active
     setDeliveryToCancel(null);
     setIsCancelModalOpen(false);
   };
 
   const handleConfirmCancel = async () => {
     if (deliveryToCancel) {
-      await onCancelDelivery(deliveryToCancel.id);
-      closeCancelModal();
+      setIsCanceling(true);
+      try {
+        await onCancelDelivery(deliveryToCancel.id);
+        // Fecha o modal apenas se tudo correr bem (o hook em App.tsx já tratou o erro)
+        setDeliveryToCancel(null);
+        setIsCancelModalOpen(false);
+      } catch (e) {
+        console.error("Failed to cancel", e);
+      } finally {
+        setIsCanceling(false);
+      }
     }
   };
 
@@ -511,15 +522,17 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     onClick={closeCancelModal}
+                    disabled={isCanceling}
                     className="w-full bg-white border border-gray-300 text-gray-700 font-bold py-2.5 rounded-lg hover:bg-gray-50 transition-colors"
                   >
                     Manter
                   </button>
                   <button
                     onClick={handleConfirmCancel}
-                    className="w-full bg-red-600 text-white font-bold py-2.5 rounded-lg hover:bg-red-700 transition-colors shadow-sm"
+                    disabled={isCanceling}
+                    className="w-full bg-red-600 text-white font-bold py-2.5 rounded-lg hover:bg-red-700 transition-colors shadow-sm flex items-center justify-center gap-2"
                   >
-                    Sim, Cancelar
+                    {isCanceling ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Sim, Cancelar'}
                   </button>
                 </div>
               </div>

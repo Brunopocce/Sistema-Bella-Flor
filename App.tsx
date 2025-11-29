@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { DollarSign, Wallet, LayoutDashboard, FileText, Calendar, LogOut, Bike, MapPin, CheckCircle2, Clock, X, Download, User, ChevronDown, ChevronRight, ArrowLeftRight } from 'lucide-react';
+import { DollarSign, Wallet, LayoutDashboard, FileText, Calendar, LogOut, Bike, MapPin, CheckCircle2, Clock, X, Download, User, ChevronDown, ChevronRight, ArrowLeftRight, RefreshCw } from 'lucide-react';
 import { SalesForm } from './components/SalesForm';
 import { SalesList } from './components/SalesList';
 import { PaymentForm } from './components/PaymentForm';
@@ -21,6 +21,7 @@ function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [userRole, setUserRole] = useState<UserRole | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshingDeliveries, setIsRefreshingDeliveries] = useState(false);
 
   // Data states from Supabase
   const [sales, setSales] = useState<Sale[]>([]);
@@ -80,17 +81,23 @@ function App() {
     }
   }, [session]);
 
-  // --- REALTIME SUBSCRIPTION (OTIMIZADO) ---
+  // --- POLLING DE SEGURANÇA (CINTO E SUSPENSÓRIOS) ---
+  // Garante que mesmo se o Realtime falhar, os dados são atualizados a cada 10 segundos
+  useEffect(() => {
+    if (!session) return;
+
+    const intervalId = setInterval(() => {
+       fetchDeliveries(); 
+    }, 10000); // 10 segundos
+
+    return () => clearInterval(intervalId);
+  }, [session]);
+
+  // --- REALTIME SUBSCRIPTION (ROBUSTO) ---
   useEffect(() => {
     if (!session?.user?.id) return;
     
-    // Limpeza de segurança: remove canais existentes antes de criar um novo
-    supabase.getChannels().forEach(channel => {
-      if (channel.topic === 'realtime:public:deliveries') {
-        supabase.removeChannel(channel);
-      }
-    });
-
+    // Simplificamos a lógica: Apenas inscreve no canal e deixa o cleanup natural do useEffect lidar com a remoção
     const channel = supabase
       .channel('realtime:public:deliveries')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'deliveries' }, (payload) => {
@@ -101,11 +108,16 @@ function App() {
                 // Remove item otimista (ID negativo) que tenha o mesmo order_id
                 const cleanPrev = prev.filter(d => d.id > 0 || String(d.order_id) !== String(newDelivery.order_id));
                 
-                // Evita duplicatas se o item real já estiver na lista (race condition)
+                // Evita duplicatas se o item real já estiver na lista (polling pode ter trazido)
                 if (cleanPrev.some(d => d.id === newDelivery.id)) return cleanPrev;
 
                 return [newDelivery, ...cleanPrev];
             });
+            
+            // Notificação visual para o admin quando entra entrega nova
+            if (userRole === 'admin') {
+                showNotification(`Nova entrega #${newDelivery.order_id} iniciada`);
+            }
         } 
         else if (payload.eventType === 'UPDATE') {
             const updatedDelivery = payload.new as Delivery;
@@ -122,13 +134,15 @@ function App() {
       .subscribe((status) => {
           if (status === 'SUBSCRIBED') {
               console.log('Sincronização em tempo real ativa');
+          } else {
+              console.log('Status Realtime:', status);
           }
       });
       
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [session?.user?.id]); // Depende apenas do ID do usuário para evitar reconexões em refresh de token
+  }, [session?.user?.id]); // Depende apenas do ID do usuário
 
   const fetchData = async () => {
     fetchSales();
@@ -158,8 +172,20 @@ function App() {
   
   const fetchDeliveries = async () => {
       const { data, error } = await supabase.from('deliveries').select('*').order('created_at', { ascending: false });
-      if (error) handleDbError(error);
-      else setDeliveries(data || []);
+      if (error) {
+        // Silently fail on connection errors during polling to avoid spamming alerts
+        console.warn("Polling error:", error.message);
+      } else {
+        // Atualiza o estado apenas se os dados mudaram (o React faz essa verificação superficialmente, 
+        // mas aqui garantimos que a lista inteira é atualizada)
+        setDeliveries(data || []);
+      }
+  };
+  
+  const manualRefreshDeliveries = async () => {
+    setIsRefreshingDeliveries(true);
+    await fetchDeliveries();
+    setTimeout(() => setIsRefreshingDeliveries(false), 500);
   };
 
   // --- HANDLER FUNCTIONS (CRUD) ---
@@ -258,19 +284,19 @@ function App() {
     // 2. Atualiza UI Imediatamente
     setDeliveries(prev => [newDelivery, ...prev]);
 
-    // 3. Envia para o Banco
-    const { error } = await supabase.from('deliveries').insert([{
+    // 3. Envia para o Banco e recupera o ID real (IMPORTANTE: Usar .select())
+    const { data, error } = await supabase.from('deliveries').insert([{
         order_id: orderId,
         address,
         status: 'in_route',
         start_time: new Date().toISOString(),
         driver_email: session?.user?.email,
         delivery_fee: deliveryFee
-    }]);
+    }]).select();
     
-    // 4. Tratamento de Erro (Rollback)
+    // 4. Tratamento
     if (error) {
-        setDeliveries(prev => prev.filter(d => d.id !== tempId)); // Remove item temporário
+        setDeliveries(prev => prev.filter(d => d.id !== tempId)); // Remove item temporário em caso de erro
 
         if (error.message.includes("driver_email")) {
             alert("⚠️ Erro: Coluna 'driver_email' faltando no banco.");
@@ -279,6 +305,11 @@ function App() {
         } else {
             alert("Erro ao iniciar entrega: " + error.message);
         }
+    } else if (data && data.length > 0) {
+        // 5. Sucesso: Substitui o ID temporário pelo ID real do banco no estado
+        // Isso previne erros se o usuário tentar cancelar logo em seguida
+        const realDelivery = data[0];
+        setDeliveries(prev => prev.map(d => d.id === tempId ? realDelivery : d));
     }
   };
 
@@ -313,12 +344,18 @@ function App() {
     // 1. Remoção Otimista Local
     setDeliveries(prev => prev.filter(d => d.id !== deliveryId));
 
+    // Se for ID negativo (otimista que ainda não sincronizou), paramos aqui.
+    // O item já foi removido da tela. Se a requisição de inserção anterior falhar, tudo bem.
+    // Se a requisição de inserção tiver sucesso depois, o Realtime/Polling trará o item de volta,
+    // mas isso é melhor do que tentar deletar um ID que não existe no banco.
+    if (deliveryId < 0) return;
+
     // 2. Remoção no Banco
     const { error } = await supabase.from('deliveries').delete().eq('id', deliveryId);
     
     // 3. Rollback em caso de erro
     if (error) {
-      alert("Erro ao cancelar entrega: " + error.message);
+      alert("Erro ao cancelar entrega no servidor: " + error.message);
       fetchDeliveries(); // Recarrega do banco para restaurar consistência
     }
   };
@@ -719,9 +756,19 @@ function App() {
                     </div>
                     <h3 className="font-bold text-gray-800">Monitoramento de Entregas</h3>
                 </div>
-                <span className="text-xs font-medium px-2 py-1 bg-white border rounded text-gray-500">
-                    Tempo Real
-                </span>
+                <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium px-2 py-1 bg-white border rounded text-gray-500">
+                        Tempo Real
+                    </span>
+                    <button 
+                        onClick={manualRefreshDeliveries}
+                        disabled={isRefreshingDeliveries}
+                        className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500 hover:text-brand-600 transition-all disabled:opacity-50"
+                        title="Atualizar lista de entregas"
+                    >
+                        <RefreshCw className={`w-4 h-4 ${isRefreshingDeliveries ? 'animate-spin text-brand-600' : ''}`} />
+                    </button>
+                </div>
               </div>
               <div className="p-5">
                 {activeDeliveries.length === 0 ? (
