@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { DollarSign, Wallet, LayoutDashboard, Download, Calendar, LogOut } from 'lucide-react';
+import { DollarSign, Wallet, LayoutDashboard, Download, Calendar, LogOut, MapPin, Bike, Bell } from 'lucide-react';
 import { SalesForm } from './components/SalesForm';
 import { SalesList } from './components/SalesList';
 import { PaymentForm } from './components/PaymentForm';
@@ -7,14 +7,16 @@ import { PaymentList } from './components/PaymentList';
 import { StatCard } from './components/StatCard';
 import { LoginScreen } from './components/LoginScreen';
 import { DriverDashboard } from './components/DriverDashboard';
-import { Sale, SummaryStats, Payment, UserRole, DeliveryLog } from './types';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { Sale, SummaryStats, Payment, UserRole, DeliveryLog, ActiveDelivery } from './types';
 
 function App() {
   // Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [userRole, setUserRole] = useState<UserRole>('admin'); // Default, will be set on login
   const [isAuthChecking, setIsAuthChecking] = useState(true);
+
+  // Notifications State
+  const [notification, setNotification] = useState<{message: string, show: boolean}>({ message: '', show: false });
 
   // Check login status on mount
   useEffect(() => {
@@ -46,6 +48,12 @@ function App() {
     return saved ? JSON.parse(saved) : [];
   });
 
+  // Initialize ACTIVE deliveries state (In Route)
+  const [activeDeliveries, setActiveDeliveries] = useState<ActiveDelivery[]>(() => {
+    const saved = localStorage.getItem('comissao_tracker_active_deliveries');
+    return saved ? JSON.parse(saved) : [];
+  });
+
   // Persist sales
   useEffect(() => {
     if (isAuthenticated) {
@@ -67,6 +75,34 @@ function App() {
     }
   }, [deliveries, isAuthenticated]);
 
+  // Persist ACTIVE deliveries
+  useEffect(() => {
+    if (isAuthenticated) {
+      localStorage.setItem('comissao_tracker_active_deliveries', JSON.stringify(activeDeliveries));
+    }
+  }, [activeDeliveries, isAuthenticated]);
+
+  // Listen for storage changes (to sync tabs roughly)
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'comissao_tracker_active_deliveries' && e.newValue) {
+        setActiveDeliveries(JSON.parse(e.newValue));
+      }
+      if (e.key === 'comissao_tracker_deliveries' && e.newValue) {
+        setDeliveries(JSON.parse(e.newValue));
+        // Simple notification if new delivery added
+        showNotification("Atualização nas entregas recebida!");
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
+  const showNotification = (msg: string) => {
+    setNotification({ message: msg, show: true });
+    setTimeout(() => setNotification({ message: '', show: false }), 4000);
+  };
+
   const handleLogin = (role: UserRole) => {
     localStorage.setItem('bellaflor_auth', 'true');
     localStorage.setItem('bellaflor_role', role);
@@ -77,10 +113,12 @@ function App() {
     const savedSales = localStorage.getItem('comissao_tracker_sales_v2');
     const savedPayments = localStorage.getItem('comissao_tracker_payments');
     const savedDeliveries = localStorage.getItem('comissao_tracker_deliveries');
+    const savedActiveDeliveries = localStorage.getItem('comissao_tracker_active_deliveries');
     
     if (savedSales) setSales(JSON.parse(savedSales));
     if (savedPayments) setPayments(JSON.parse(savedPayments));
     if (savedDeliveries) setDeliveries(JSON.parse(savedDeliveries));
+    if (savedActiveDeliveries) setActiveDeliveries(JSON.parse(savedActiveDeliveries));
   };
 
   const handleLogout = () => {
@@ -126,6 +164,16 @@ function App() {
     }
   };
 
+  const handleStartDelivery = (orderId: string, address: string) => {
+    const newActive: ActiveDelivery = {
+      orderId,
+      address,
+      startTime: Date.now(),
+      driverName: 'Entregador'
+    };
+    setActiveDeliveries(prev => [...prev, newActive]);
+  };
+
   const handleAddDelivery = (orderId: string, address: string) => {
     const newDelivery: DeliveryLog = {
       id: crypto.randomUUID(),
@@ -133,7 +181,17 @@ function App() {
       address,
       deliveredAt: Date.now()
     };
+    
+    // Remove from active list
+    setActiveDeliveries(prev => prev.filter(d => d.orderId !== orderId));
+    
+    // Add to history
     setDeliveries(prev => [...prev, newDelivery]);
+    
+    // Show Notification if user is on Admin view
+    if (userRole === 'admin') {
+      showNotification(`Pedido #${orderId} Entregue com Sucesso!`);
+    }
   };
 
   // Calculate statistics
@@ -178,21 +236,6 @@ function App() {
       });
   }, [sales]);
 
-  // Chart Data Preparation
-  const chartData = useMemo(() => {
-    const grouped = sales.reduce((acc, sale) => {
-      const [y, m, d] = sale.date.split('-');
-      const key = `${d}/${m}`;
-      acc[key] = (acc[key] || 0) + sale.value;
-      return acc;
-    }, {} as Record<string, number>);
-
-    return Object.entries(grouped)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => 0) 
-      .slice(-7);
-  }, [sales]);
-
   const formatCurrency = (val: number) => 
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
 
@@ -214,6 +257,15 @@ function App() {
     document.body.removeChild(link);
   };
 
+  const formatTimeAgo = (timestamp: number) => {
+    const seconds = Math.floor((Date.now() - timestamp) / 1000);
+    if (seconds < 60) return `${seconds}s atrás`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m atrás`;
+    const hours = Math.floor(minutes / 60);
+    return `${hours}h atrás`;
+  };
+
   if (isAuthChecking) {
     return null;
   }
@@ -228,6 +280,7 @@ function App() {
       <DriverDashboard 
         onLogout={handleLogout} 
         onAddDelivery={handleAddDelivery} 
+        onStartDelivery={handleStartDelivery}
         deliveries={deliveries}
       />
     );
@@ -235,7 +288,20 @@ function App() {
 
   // --- RENDER ADMIN DASHBOARD ---
   return (
-    <div className="min-h-screen bg-gray-50 pb-20">
+    <div className="min-h-screen bg-gray-50 pb-20 relative">
+      {/* Toast Notification */}
+      {notification.show && (
+        <div className="fixed top-20 right-4 z-50 bg-white border border-green-200 shadow-xl rounded-xl p-4 flex items-center gap-3 animate-in slide-in-from-right duration-300">
+            <div className="bg-green-100 p-2 rounded-full">
+                <Bike className="w-5 h-5 text-green-600" />
+            </div>
+            <div>
+                <h4 className="text-sm font-bold text-gray-900">Atualização de Entrega</h4>
+                <p className="text-xs text-gray-600">{notification.message}</p>
+            </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -336,38 +402,80 @@ function App() {
               <PaymentList payments={payments} onDelete={handleDeletePayment} />
             </div>
 
-             {/* Chart */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-              <h3 className="text-lg font-semibold text-gray-800 mb-6">Vendas Recentes</h3>
-              <div className="h-64 w-full">
-                {sales.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={chartData}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                      <XAxis 
-                        dataKey="name" 
-                        axisLine={false} 
-                        tickLine={false} 
-                        tick={{fill: '#9ca3af', fontSize: 12}}
-                        dy={10}
-                      />
-                      <YAxis 
-                        hide={true} 
-                      />
-                      <Tooltip 
-                        cursor={{fill: '#fce7f3'}}
-                        contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}}
-                      />
-                      <Bar dataKey="value" fill="#ec4899" radius={[4, 4, 0, 0]} barSize={32} />
-                    </BarChart>
-                  </ResponsiveContainer>
+             {/* Live Delivery Status */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                    <div className="relative">
+                        <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+                        </span>
+                        <Bike className="w-5 h-5 text-gray-700" />
+                    </div>
+                    <h3 className="font-bold text-gray-800">Monitoramento de Entregas</h3>
+                </div>
+                <span className="text-xs font-medium px-2 py-1 bg-white border rounded text-gray-500">
+                    Tempo Real
+                </span>
+              </div>
+              
+              <div className="p-5">
+                {activeDeliveries.length === 0 ? (
+                    <div className="text-center py-8">
+                        <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                            <MapPin className="w-6 h-6 text-gray-300" />
+                        </div>
+                        <p className="text-gray-400 text-sm font-medium">Nenhum pedido em rota no momento.</p>
+                        <p className="text-gray-300 text-xs mt-1">Os pedidos aparecerão aqui quando o motorista iniciar o GPS.</p>
+                    </div>
                 ) : (
-                  <div className="h-full flex items-center justify-center text-gray-400 text-sm">
-                    Sem dados para o gráfico
-                  </div>
+                    <div className="space-y-3">
+                        {activeDeliveries.map((delivery, index) => (
+                            <div key={index} className="flex items-start gap-3 p-3 bg-blue-50 border border-blue-100 rounded-xl relative overflow-hidden">
+                                <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
+                                <div className="bg-white p-2 rounded-full shadow-sm shrink-0">
+                                    <Bike className="w-5 h-5 text-blue-600" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex justify-between items-start">
+                                        <h4 className="text-sm font-bold text-gray-900">Pedido #{delivery.orderId}</h4>
+                                        <span className="text-[10px] font-bold text-blue-600 bg-white px-1.5 py-0.5 rounded shadow-sm animate-pulse">
+                                            EM ROTA
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-gray-600 mt-0.5 truncate">{delivery.address}</p>
+                                    <div className="flex items-center gap-1 mt-2 text-[10px] text-gray-400">
+                                        <Clock className="w-3 h-3" />
+                                        Iniciado {formatTimeAgo(delivery.startTime)}
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 )}
               </div>
+              
+              <div className="bg-gray-50 px-5 py-3 border-t border-gray-100">
+                  <h4 className="text-xs font-bold text-gray-500 uppercase mb-2">Últimas Entregas</h4>
+                  {deliveries.length === 0 ? (
+                      <p className="text-xs text-gray-400 italic">Histórico vazio.</p>
+                  ) : (
+                      <ul className="space-y-2">
+                          {deliveries.slice(-3).reverse().map(del => (
+                              <li key={del.id} className="text-xs flex justify-between items-center">
+                                  <span className="text-gray-600 truncate max-w-[150px]">#{del.orderId} - {del.address}</span>
+                                  <span className="text-green-600 font-bold flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3" />
+                                      {new Date(del.deliveredAt).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}
+                                  </span>
+                              </li>
+                          ))}
+                      </ul>
+                  )}
+              </div>
             </div>
+
           </div>
         </div>
 
@@ -377,3 +485,5 @@ function App() {
 }
 
 export default App;
+// Added missing imports for CheckCircle2 and Clock which were used in the new component section
+import { CheckCircle2, Clock } from 'lucide-react';

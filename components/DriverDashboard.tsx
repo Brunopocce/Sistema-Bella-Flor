@@ -5,6 +5,7 @@ import { DeliveryLog } from '../types';
 interface DriverDashboardProps {
   onLogout: () => void;
   onAddDelivery: (orderId: string, address: string) => void;
+  onStartDelivery: (orderId: string, address: string) => void;
   deliveries: DeliveryLog[];
 }
 
@@ -23,7 +24,7 @@ interface AddressSuggestion {
   };
 }
 
-export const DriverDashboard: React.FC<DriverDashboardProps> = ({ onLogout, onAddDelivery, deliveries }) => {
+export const DriverDashboard: React.FC<DriverDashboardProps> = ({ onLogout, onAddDelivery, onStartDelivery, deliveries }) => {
   const [orderId, setOrderId] = useState('');
   
   // Address States
@@ -93,7 +94,7 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({ onLogout, onAd
         viewboxParam = `&viewbox=${left},${top},${right},${bottom}&bounded=1`;
       }
 
-      // Removido cabeçalho User-Agent para evitar erro de CORS no navegador
+      // Removed 'User-Agent' header to fix CORS error in browser
       const response = await fetch(
         `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&addressdetails=1&limit=5&countrycodes=br${viewboxParam}`
       );
@@ -182,6 +183,9 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({ onLogout, onAd
     const fullDestination = streetNumber 
       ? `${addressQuery}, ${streetNumber}` 
       : addressQuery;
+
+    // Notificar App que a entrega começou (Status: Em Rota)
+    onStartDelivery(orderId, fullDestination);
 
     const encodedAddress = encodeURIComponent(fullDestination);
     const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodedAddress}&travelmode=driving`;

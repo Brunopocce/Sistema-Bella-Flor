@@ -23,6 +23,13 @@ export interface DeliveryLog {
   deliveredAt: number;
 }
 
+export interface ActiveDelivery {
+  orderId: string;
+  address: string;
+  startTime: number;
+  driverName?: string;
+}
+
 export type UserRole = 'admin' | 'driver';
 
 export interface SummaryStats {
