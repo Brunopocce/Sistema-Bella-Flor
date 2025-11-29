@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { MapPin, Navigation, CheckCircle2, Package, LogOut, Clock, RotateCcw, Search, Home, X, ChevronDown, ChevronUp, Plus, Download, AlertTriangle, ArrowLeft } from 'lucide-react';
+import { MapPin, Navigation, CheckCircle2, Package, LogOut, Clock, RotateCcw, Search, Home, X, ChevronDown, ChevronUp, Plus, Download, AlertTriangle, ArrowLeft, Loader2 } from 'lucide-react';
 import { Delivery } from '../types';
 
 declare global {
@@ -49,6 +49,9 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(true);
+
+  // Loading state for submission
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Cancel Modal State
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
@@ -189,9 +192,19 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
 
   const handleAddToRoute = async () => {
     if (!addressQuery || !orderId) return alert("Preencha o número do pedido e o endereço.");
+    if (isSubmitting) return;
+
+    setIsSubmitting(true);
     const fullDestination = streetNumber ? `${addressQuery}, ${streetNumber}` : addressQuery;
-    await onStartDelivery(orderId, fullDestination);
-    setOrderId(''); setAddressQuery(''); setStreetNumber(''); setIsFormOpen(false);
+    
+    try {
+        await onStartDelivery(orderId, fullDestination);
+        setOrderId(''); setAddressQuery(''); setStreetNumber(''); setIsFormOpen(false);
+    } catch (error) {
+        console.error("Error adding to route:", error);
+    } finally {
+        setIsSubmitting(false);
+    }
   };
 
   const openCancelModal = (delivery: Delivery) => {
@@ -389,7 +402,23 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
                     <Home className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
                   </div>
                 </div>
-                <button onClick={handleAddToRoute} className="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold py-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 text-lg mt-2 active:scale-[0.98]"><Plus className="w-6 h-6" />Adicionar à Rota</button>
+                <button 
+                  onClick={handleAddToRoute}
+                  disabled={isSubmitting}
+                  className="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold py-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 text-lg mt-2 active:scale-[0.98] disabled:opacity-75 disabled:cursor-not-allowed"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-6 h-6 animate-spin" />
+                      Adicionando...
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-6 h-6" />
+                      Adicionar à Rota
+                    </>
+                  )}
+                </button>
             </div>
           )}
         </div>

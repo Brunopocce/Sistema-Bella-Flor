@@ -93,7 +93,18 @@ function App() {
         
         // Handle State Updates Locally for Instant Feedback
         if (payload.eventType === 'INSERT') {
-            setDeliveries(prev => [payload.new as Delivery, ...prev]);
+            const newDelivery = payload.new as Delivery;
+            setDeliveries(prev => {
+                // REMOVE OPTIMISTIC (TEMPORARY) ITEM:
+                // Remove any item with a negative ID (optimistic) that matches the order_id of the real item coming from DB
+                // This prevents duplicates on screen
+                const cleanPrev = prev.filter(d => d.id > 0 || d.order_id !== newDelivery.order_id);
+                
+                // Avoid duplicates if the real item is already there (rare race condition)
+                if (cleanPrev.some(d => d.id === newDelivery.id)) return cleanPrev;
+
+                return [newDelivery, ...cleanPrev];
+            });
         } 
         else if (payload.eventType === 'UPDATE') {
             const updatedDelivery = payload.new as Delivery;
@@ -229,17 +240,38 @@ function App() {
   };
 
   const handleStartDelivery = async (orderId: string, address: string) => {
-    const newDelivery = {
+    // 1. Create a Temporary Delivery Object for Optimistic UI
+    // Use a negative ID to avoid collision with real DB IDs
+    const tempId = -1 * Date.now(); 
+    
+    const newDelivery: Delivery = {
+      id: tempId, // Temporary ID
       order_id: orderId,
       address,
-      status: 'in_route' as const,
+      status: 'in_route',
       start_time: new Date().toISOString(),
-      driver_email: session?.user?.email // Salva quem iniciou a entrega
+      created_at: new Date().toISOString(),
+      delivered_at: null,
+      driver_email: session?.user?.email 
     };
-    // Optimistic update locally not needed here as Realtime subscription handles INSERT event
-    const { error } = await supabase.from('deliveries').insert([newDelivery]);
+
+    // 2. Update UI Immediately (Optimistic Update)
+    setDeliveries(prev => [newDelivery, ...prev]);
+
+    // 3. Send to Database in Background
+    const { error } = await supabase.from('deliveries').insert([{
+        order_id: orderId,
+        address,
+        status: 'in_route',
+        start_time: new Date().toISOString(),
+        driver_email: session?.user?.email
+    }]);
     
+    // 4. Handle Errors
     if (error) {
+        // Remove the temporary item if the request failed
+        setDeliveries(prev => prev.filter(d => d.id !== tempId));
+
         if (error.message.includes("Could not find the table")) {
             alert("⚠️ Tabela 'deliveries' não encontrada!\nExecute o script 'database.sql' no Supabase.");
         } else if (error.message.includes("driver_email")) {
@@ -248,6 +280,8 @@ function App() {
             alert("Erro ao iniciar entrega: " + error.message);
         }
     }
+    // Note: If success, the Realtime Subscription will pick up the 'INSERT' event.
+    // The subscription logic has been updated to replace the temp item with the real item.
   };
 
   const handleConfirmDelivery = async (deliveryId: number) => {
