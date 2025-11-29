@@ -421,7 +421,8 @@ function App() {
                         type="month" 
                         value={exportMonth}
                         onChange={(e) => setExportMonth(e.target.value)}
-                        className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none mb-6"
+                        style={{ colorScheme: 'light' }}
+                        className="w-full px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-900 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none mb-6"
                     />
                     <button 
                         onClick={generateMonthlyReport}

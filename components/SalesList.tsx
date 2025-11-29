@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { Trash2, TrendingUp, Clock, Pencil, AlertCircle, Bike, CalendarDays, X, Save, AlertTriangle } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Trash2, TrendingUp, Clock, Pencil, AlertCircle, Bike, CalendarDays, X, Save, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import { Sale } from '../types';
 
 interface SalesListProps {
@@ -11,6 +11,9 @@ interface SalesListProps {
 export const SalesList: React.FC<SalesListProps> = ({ sales, onDelete, onUpdate }) => {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [saleToDelete, setSaleToDelete] = useState<number | null>(null);
+
+  // Accordion State
+  const [expandedMonths, setExpandedMonths] = useState<string[]>([]);
 
   // Edit Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -63,6 +66,21 @@ export const SalesList: React.FC<SalesListProps> = ({ sales, onDelete, onUpdate 
         };
       });
   }, [sales]);
+
+  // Expand the first month (most recent) automatically when data loads
+  useEffect(() => {
+    if (groupedSales.length > 0 && expandedMonths.length === 0) {
+      setExpandedMonths([groupedSales[0].monthKey]);
+    }
+  }, [groupedSales.length]); // Dependency on length to trigger only on data load
+
+  const toggleMonth = (key: string) => {
+    setExpandedMonths(prev => 
+      prev.includes(key) 
+        ? prev.filter(k => k !== key) 
+        : [...prev, key]
+    );
+  };
 
   const confirmDelete = (id: number) => {
     setSaleToDelete(id);
@@ -139,61 +157,76 @@ export const SalesList: React.FC<SalesListProps> = ({ sales, onDelete, onUpdate 
   }
 
   return (
-    <div className="space-y-8">
-      {groupedSales.map((group) => (
-        <div key={group.monthKey} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              <CalendarDays className="w-5 h-5 text-brand-600" />
-              <h3 className="text-lg font-bold text-gray-900 capitalize">{group.title}</h3>
+    <div className="space-y-6">
+      {groupedSales.map((group) => {
+        const isExpanded = expandedMonths.includes(group.monthKey);
+
+        return (
+          <div key={group.monthKey} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden transition-all duration-200">
+            <div 
+              onClick={() => toggleMonth(group.monthKey)}
+              className={`px-6 py-4 flex justify-between items-center cursor-pointer transition-colors hover:bg-gray-50 ${isExpanded ? 'bg-gray-50 border-b border-gray-200' : 'bg-white'}`}
+            >
+              <div className="flex items-center gap-3">
+                <div className={`p-1.5 rounded-full ${isExpanded ? 'bg-brand-100 text-brand-600' : 'bg-gray-100 text-gray-400'}`}>
+                  {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                </div>
+                <div className="flex items-center gap-2">
+                  <CalendarDays className={`w-5 h-5 ${isExpanded ? 'text-brand-600' : 'text-gray-400'}`} />
+                  <h3 className="text-lg font-bold text-gray-900 capitalize">{group.title}</h3>
+                </div>
+              </div>
+              <div className="text-sm">
+                <span className="text-gray-500 mr-2">Total:</span>
+                <span className="font-bold text-brand-700 text-lg">{formatCurrency(group.total)}</span>
+              </div>
             </div>
-            <div className="text-sm">
-              <span className="text-gray-500 mr-2">Total do Mês:</span>
-              <span className="font-bold text-brand-700 text-lg">{formatCurrency(group.total)}</span>
-            </div>
+            
+            {isExpanded && (
+              <div className="overflow-x-auto animate-in slide-in-from-top-2 duration-200">
+                <table className="w-full text-left">
+                  <thead className="bg-white border-b-2 border-gray-100">
+                    <tr>
+                      <th className="px-6 py-4 text-xs font-bold text-black uppercase tracking-wider">Data</th>
+                      <th className="px-6 py-4 text-xs font-bold text-black uppercase tracking-wider flex items-center gap-1"><Clock className="w-3 h-3" /> Hora</th>
+                      <th className="px-6 py-4 text-xs font-bold text-black uppercase tracking-wider">Pedido</th>
+                      <th className="px-6 py-4 text-xs font-bold text-black uppercase tracking-wider text-right">Valor Venda</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Taxa Entrega</th>
+                      <th className="px-6 py-4 text-xs font-bold text-black uppercase tracking-wider text-right">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {group.sales.map((sale) => (
+                      <tr key={sale.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-4 text-sm text-black font-medium">{formatDate(sale.date)}</td>
+                        <td className="px-6 py-4 text-sm text-gray-500 font-medium">{formatTime(sale.created_at)}</td>
+                        <td className="px-6 py-4 text-sm text-black">{sale.order_id || '-'}</td>
+                        <td className="px-6 py-4 text-sm text-black text-right">
+                          <div className="font-bold">{formatCurrency(sale.value)}</div>
+                          {sale.justification && (
+                            <div className="text-xs text-amber-600 mt-1 flex items-center justify-end gap-1" title={sale.justification}><AlertCircle className="w-3 h-3" />Editado</div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-500 text-right">
+                          {sale.delivery_fee && sale.delivery_fee > 0 ? (
+                            <div className="flex items-center justify-end gap-1"><Bike className="w-3 h-3 text-gray-400" />{formatCurrency(sale.delivery_fee)}</div>
+                          ) : ( <span className="text-gray-300">-</span> )}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex justify-end gap-1">
+                            <button onClick={() => handleEditClick(sale)} className="text-gray-400 hover:text-brand-600 transition-colors p-2 rounded-full hover:bg-brand-50" title="Editar"><Pencil className="w-4 h-4" /></button>
+                            <button onClick={() => confirmDelete(sale.id)} className="text-gray-400 hover:text-red-600 transition-colors p-2 rounded-full hover:bg-red-50" title="Excluir"><Trash2 className="w-4 h-4" /></button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead className="bg-white border-b-2 border-gray-100">
-                <tr>
-                  <th className="px-6 py-4 text-xs font-bold text-black uppercase tracking-wider">Data</th>
-                  <th className="px-6 py-4 text-xs font-bold text-black uppercase tracking-wider flex items-center gap-1"><Clock className="w-3 h-3" /> Hora</th>
-                  <th className="px-6 py-4 text-xs font-bold text-black uppercase tracking-wider">Pedido</th>
-                  <th className="px-6 py-4 text-xs font-bold text-black uppercase tracking-wider text-right">Valor Venda</th>
-                  <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Taxa Entrega</th>
-                  <th className="px-6 py-4 text-xs font-bold text-black uppercase tracking-wider text-right">Ações</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {group.sales.map((sale) => (
-                  <tr key={sale.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4 text-sm text-black font-medium">{formatDate(sale.date)}</td>
-                    <td className="px-6 py-4 text-sm text-gray-500 font-medium">{formatTime(sale.created_at)}</td>
-                    <td className="px-6 py-4 text-sm text-black">{sale.order_id || '-'}</td>
-                    <td className="px-6 py-4 text-sm text-black text-right">
-                      <div className="font-bold">{formatCurrency(sale.value)}</div>
-                      {sale.justification && (
-                        <div className="text-xs text-amber-600 mt-1 flex items-center justify-end gap-1" title={sale.justification}><AlertCircle className="w-3 h-3" />Editado</div>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-500 text-right">
-                      {sale.delivery_fee && sale.delivery_fee > 0 ? (
-                        <div className="flex items-center justify-end gap-1"><Bike className="w-3 h-3 text-gray-400" />{formatCurrency(sale.delivery_fee)}</div>
-                      ) : ( <span className="text-gray-300">-</span> )}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex justify-end gap-1">
-                        <button onClick={() => handleEditClick(sale)} className="text-gray-400 hover:text-brand-600 transition-colors p-2 rounded-full hover:bg-brand-50" title="Editar"><Pencil className="w-4 h-4" /></button>
-                        <button onClick={() => confirmDelete(sale.id)} className="text-gray-400 hover:text-red-600 transition-colors p-2 rounded-full hover:bg-red-50" title="Excluir"><Trash2 className="w-4 h-4" /></button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ))}
+        );
+      })}
       
       {/* Modal de Confirmação de Exclusão */}
       {isDeleteModalOpen && (
