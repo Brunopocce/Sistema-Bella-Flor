@@ -34,19 +34,33 @@ function App() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportMonth, setExportMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
 
+  // --- HELPER TO RESOLVE ROLE ---
+  const resolveUserRole = (session: Session | null): UserRole | null => {
+    if (!session?.user) return null;
+    const email = session.user.email;
+    
+    // Força a role 'driver' para emails conhecidos de entregadores
+    // Isso corrige casos onde o metadata do usuário pode estar incorreto ou ausente
+    if (email === 'everton@bellaflor.com.br' || email === 'driver@bellaflor.com') {
+        return 'driver';
+    }
+    
+    return (session.user.user_metadata?.role as UserRole) || null;
+  };
+
   // --- AUTHENTICATION & DATA FETCHING ---
   useEffect(() => {
     // 1. Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      setUserRole((session?.user?.user_metadata?.role as UserRole) || null);
+      setUserRole(resolveUserRole(session));
       setIsLoading(false);
     });
 
     // 2. Listen for auth state changes
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      setUserRole((session?.user?.user_metadata?.role as UserRole) || null);
+      setUserRole(resolveUserRole(session));
       if (_event === 'SIGNED_OUT') {
           // Clear all data on sign out logic handled in handleLogout as well
       }
@@ -203,7 +217,8 @@ function App() {
       order_id: orderId,
       address,
       status: 'in_route' as const,
-      start_time: new Date().toISOString()
+      start_time: new Date().toISOString(),
+      driver_email: session?.user?.email // Salva quem iniciou a entrega
     };
     const { data, error } = await supabase.from('deliveries').insert([newDelivery]).select();
     if (error) {
@@ -272,8 +287,37 @@ function App() {
     });
   }, [sales]);
   
-  const activeDeliveries = useMemo(() => deliveries.filter(d => d.status === 'in_route'), [deliveries]);
-  const finishedDeliveries = useMemo(() => deliveries.filter(d => d.status === 'delivered'), [deliveries]);
+  // Filter deliveries based on user role
+  const filteredDeliveries = useMemo(() => {
+      if (userRole === 'driver' && session?.user?.email) {
+          return deliveries.filter(d => {
+              // Se tiver driver_email, deve corresponder ao usuário atual
+              // Se NÃO tiver driver_email (legado), mostramos para manter compatibilidade ou escondemos.
+              // Assumindo que queremos isolar totalmente: só mostra se coincidir ou se for o driver genérico antigo
+              if (d.driver_email) {
+                  return d.driver_email === session.user.email;
+              }
+              // Se for a conta antiga genérica (driver@bellaflor.com), talvez queira ver todos sem dono
+              // Se for Everton, só vê as dele.
+              if (session.user.email === 'driver@bellaflor.com') {
+                  return true; // Driver genérico vê tudo que não tem dono
+              }
+              return false; // Everton não vê entregas sem dono
+          });
+      }
+      return deliveries; // Admin vê tudo
+  }, [deliveries, userRole, session]);
+
+  const activeDeliveries = useMemo(() => filteredDeliveries.filter(d => d.status === 'in_route'), [filteredDeliveries]);
+  const finishedDeliveries = useMemo(() => filteredDeliveries.filter(d => d.status === 'delivered'), [filteredDeliveries]);
+
+  // Determine driver name for UI
+  const getDriverName = () => {
+      const email = session?.user?.email;
+      if (email === 'everton@bellaflor.com.br') return 'Everton';
+      if (email === 'driver@bellaflor.com') return 'Entregador';
+      return 'Motorista';
+  };
 
   // --- HELPER FUNCTIONS ---
   const showNotification = (msg: string) => {
@@ -383,6 +427,7 @@ function App() {
         deliveries={finishedDeliveries}
         activeDeliveries={activeDeliveries}
         onCancelDelivery={handleCancelDelivery}
+        driverName={getDriverName()}
       />
     );
   }

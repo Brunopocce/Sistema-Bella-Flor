@@ -13,6 +13,7 @@ interface DriverDashboardProps {
   deliveries: Delivery[]; // Finished deliveries
   activeDeliveries: Delivery[]; // In-route deliveries
   onCancelDelivery: (deliveryId: number) => Promise<void>;
+  driverName?: string; // Nome do entregador para exibição
 }
 
 interface AddressSuggestion {
@@ -38,7 +39,8 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
   onStartDelivery, 
   deliveries,
   activeDeliveries,
-  onCancelDelivery
+  onCancelDelivery,
+  driverName = 'Entregador'
 }) => {
   const [orderId, setOrderId] = useState('');
   const [addressQuery, setAddressQuery] = useState('');
@@ -102,6 +104,7 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
       if (data.erro || !isCityAllowed(data.localidade)) {
         setSuggestions([]);
       } else {
+        // Correção aplicada: usar 'logradouro' em vez de 'logouro'
         const displayNameParts = [data.logradouro, data.bairro, data.localidade, data.uf].filter(Boolean);
         const suggestion: AddressSuggestion = {
           place_id: data.cep,
@@ -209,16 +212,24 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
     const tableColumns = ["Nº Pedido", "Endereço", "Início da Rota", "Entrega"];
     const tableRows = todaysDeliveries.map(d => [`#${d.order_id}`, d.address, formatTime(d.start_time), formatTime(d.delivered_at)]);
     const date = new Date().toLocaleDateString('pt-BR');
-    doc.text(`Relatório de Entregas - ${date}`, 14, 20);
+    doc.text(`Relatório de Entregas - ${date} - ${driverName}`, 14, 20);
     (doc as any).autoTable({ startY: 30, head: [tableColumns], body: tableRows, theme: 'grid' });
-    doc.save(`relatorio-entregas-${date.replace(/\//g, '-')}.pdf`);
+    doc.save(`relatorio-entregas-${driverName}-${date.replace(/\//g, '-')}.pdf`);
   };
 
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-md mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2"><div className="bg-brand-600 p-1.5 rounded-lg"><Navigation className="w-5 h-5 text-white" /></div><h1 className="text-lg font-bold text-gray-900">Entregas</h1></div>
+          <div className="flex items-center gap-2">
+              <div className="bg-brand-600 p-1.5 rounded-lg">
+                  <Navigation className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                  <h1 className="text-lg font-bold text-gray-900 leading-tight">Entregas</h1>
+                  <p className="text-xs text-brand-600 font-medium leading-none">Olá, {driverName}</p>
+              </div>
+          </div>
           <button onClick={onLogout} className="text-gray-500 hover:text-red-600 transition-colors p-2" title="Sair"><LogOut className="w-5 h-5" /></button>
         </div>
       </header>

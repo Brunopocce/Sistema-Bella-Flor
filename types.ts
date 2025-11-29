@@ -26,6 +26,7 @@ export interface Delivery {
   start_time: string; // ISO 8601 timestamp string
   delivered_at: string | null; // ISO 8601 timestamp string, null if in route
   created_at: string;
+  driver_email?: string; // Identifica qual entregador realizou a entrega
 }
 
 export type UserRole = 'admin' | 'driver';

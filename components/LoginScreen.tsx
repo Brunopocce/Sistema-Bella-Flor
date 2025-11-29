@@ -13,13 +13,16 @@ export const LoginScreen: React.FC = () => {
     setLoading(true);
 
     let email;
-    // Invertido conforme solicitação:
+    // Mapeamento de senhas para usuários
     // Admin: 236616
-    // Driver: 123456
+    // Driver Padrão: 123456
+    // Everton: 996408466
     if (password === '236616') {
       email = 'admin@bellaflor.com';
     } else if (password === '123456') {
       email = 'driver@bellaflor.com';
+    } else if (password === '996408466') {
+      email = 'everton@bellaflor.com.br';
     } else {
       setError('Senha incorreta.');
       setLoading(false);
@@ -40,7 +43,8 @@ export const LoginScreen: React.FC = () => {
             password,
             options: {
                 data: {
-                    role: email.includes('admin') ? 'admin' : 'driver'
+                    role: email.includes('admin') ? 'admin' : 'driver',
+                    name: email.includes('everton') ? 'Everton' : (email.includes('driver') ? 'Entregador' : 'Administrador')
                 }
             }
          });
@@ -87,7 +91,7 @@ export const LoginScreen: React.FC = () => {
                 />
                 <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
                   {/* Ícone muda baseado na senha digitada */}
-                  {password === '123456' ? <Truck className="w-5 h-5 text-brand-500" /> : <Lock className="w-5 h-5" />}
+                  {(password === '123456' || password === '996408466') ? <Truck className="w-5 h-5 text-brand-500" /> : <Lock className="w-5 h-5" />}
                 </div>
               </div>
             </div>
