@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { DollarSign, Wallet, LayoutDashboard, FileText, Calendar, LogOut, Bike, MapPin, CheckCircle2, Clock, X, Download } from 'lucide-react';
+import { DollarSign, Wallet, LayoutDashboard, FileText, Calendar, LogOut, Bike, MapPin, CheckCircle2, Clock, X, Download, User } from 'lucide-react';
 import { SalesForm } from './components/SalesForm';
 import { SalesList } from './components/SalesList';
 import { PaymentForm } from './components/PaymentForm';
@@ -48,6 +48,13 @@ function App() {
     return (session.user.user_metadata?.role as UserRole) || null;
   };
 
+  const resolveDriverName = (email?: string) => {
+    if (!email) return 'Motorista';
+    if (email === 'everton@bellaflor.com.br') return 'Everton';
+    if (email === 'driver@bellaflor.com') return 'Entregador Padrão';
+    return email.split('@')[0]; // Fallback para parte do email
+  };
+
   // --- AUTHENTICATION & DATA FETCHING ---
   useEffect(() => {
     // 1. Get initial session
@@ -76,24 +83,33 @@ function App() {
     }
   }, [session]);
 
-  // 4. Set up real-time subscriptions for deliveries
+  // 4. Set up real-time subscriptions for deliveries with OPTIMISTIC UPDATES
   useEffect(() => {
     if (!session) return;
     
     const deliveriesChannel = supabase
       .channel('public:deliveries')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'deliveries' }, (payload) => {
-        // Refetch all deliveries to ensure consistency
-        fetchDeliveries();
         
-        // Show notification for admin
-        if (userRole === 'admin') {
-           if (payload.eventType === 'UPDATE' && payload.new.status === 'delivered') {
-              showNotification(`Pedido #${payload.new.order_id} foi entregue!`);
-           }
-           if (payload.eventType === 'DELETE') {
-              showNotification(`Entrega #${(payload.old as Delivery).order_id} foi cancelada.`);
-           }
+        // Handle State Updates Locally for Instant Feedback
+        if (payload.eventType === 'INSERT') {
+            setDeliveries(prev => [payload.new as Delivery, ...prev]);
+        } 
+        else if (payload.eventType === 'UPDATE') {
+            const updatedDelivery = payload.new as Delivery;
+            setDeliveries(prev => prev.map(d => d.id === updatedDelivery.id ? updatedDelivery : d));
+            
+            // Notification logic for Admin
+            if (userRole === 'admin' && updatedDelivery.status === 'delivered') {
+                const driverName = resolveDriverName(updatedDelivery.driver_email);
+                showNotification(`Pedido #${updatedDelivery.order_id} entregue por ${driverName}!`);
+            }
+        } 
+        else if (payload.eventType === 'DELETE') {
+            setDeliveries(prev => prev.filter(d => d.id !== payload.old.id));
+            if (userRole === 'admin') {
+               showNotification(`Uma entrega foi removida da rota.`);
+            }
         }
       })
       .subscribe();
@@ -220,29 +236,29 @@ function App() {
       start_time: new Date().toISOString(),
       driver_email: session?.user?.email // Salva quem iniciou a entrega
     };
-    const { data, error } = await supabase.from('deliveries').insert([newDelivery]).select();
+    // Optimistic update locally not needed here as Realtime subscription handles INSERT event
+    const { error } = await supabase.from('deliveries').insert([newDelivery]);
+    
     if (error) {
         if (error.message.includes("Could not find the table")) {
             alert("⚠️ Tabela 'deliveries' não encontrada!\nExecute o script 'database.sql' no Supabase.");
+        } else if (error.message.includes("driver_email")) {
+            alert("⚠️ Erro de Banco de Dados!\n\nVocê precisa adicionar a coluna 'driver_email' na tabela 'deliveries'.\n\nVá no SQL Editor do Supabase e rode:\nALTER TABLE deliveries ADD COLUMN driver_email text;");
         } else {
             alert("Erro ao iniciar entrega: " + error.message);
         }
-    } else if (data) {
-        setDeliveries(prev => [data[0], ...prev]);
     }
   };
 
   const handleConfirmDelivery = async (deliveryId: number) => {
-     const { data, error } = await supabase
+     // Optimistic update handled by realtime subscription
+     const { error } = await supabase
         .from('deliveries')
         .update({ status: 'delivered', delivered_at: new Date().toISOString() })
-        .eq('id', deliveryId)
-        .select();
+        .eq('id', deliveryId);
 
      if (error) {
        alert("Erro ao confirmar entrega: " + error.message);
-     } else if (data) {
-       setDeliveries(prev => prev.map(d => (d.id === deliveryId ? data[0] : d)));
      }
   };
 
@@ -250,10 +266,8 @@ function App() {
     const { error } = await supabase.from('deliveries').delete().eq('id', deliveryId);
     if (error) {
       alert("Erro ao cancelar entrega: " + error.message);
-    } else {
-      // Update local state for immediate feedback, real-time will sync eventually
-      setDeliveries(prev => prev.filter(d => d.id !== deliveryId));
     }
+    // Realtime subscription handles the DELETE event and UI update
   };
 
   // --- MEMOIZED CALCULATIONS ---
@@ -291,18 +305,13 @@ function App() {
   const filteredDeliveries = useMemo(() => {
       if (userRole === 'driver' && session?.user?.email) {
           return deliveries.filter(d => {
-              // Se tiver driver_email, deve corresponder ao usuário atual
-              // Se NÃO tiver driver_email (legado), mostramos para manter compatibilidade ou escondemos.
-              // Assumindo que queremos isolar totalmente: só mostra se coincidir ou se for o driver genérico antigo
               if (d.driver_email) {
                   return d.driver_email === session.user.email;
               }
-              // Se for a conta antiga genérica (driver@bellaflor.com), talvez queira ver todos sem dono
-              // Se for Everton, só vê as dele.
               if (session.user.email === 'driver@bellaflor.com') {
-                  return true; // Driver genérico vê tudo que não tem dono
+                  return true;
               }
-              return false; // Everton não vê entregas sem dono
+              return false;
           });
       }
       return deliveries; // Admin vê tudo
@@ -313,10 +322,7 @@ function App() {
 
   // Determine driver name for UI
   const getDriverName = () => {
-      const email = session?.user?.email;
-      if (email === 'everton@bellaflor.com.br') return 'Everton';
-      if (email === 'driver@bellaflor.com') return 'Entregador';
-      return 'Motorista';
+      return resolveDriverName(session?.user?.email);
   };
 
   // --- HELPER FUNCTIONS ---
@@ -605,8 +611,18 @@ function App() {
                                     <Bike className="w-5 h-5 text-blue-600" />
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <h4 className="text-sm font-bold text-gray-900">Pedido #{delivery.order_id}</h4>
-                                    <p className="text-xs text-gray-600 mt-0.5 truncate">{delivery.address}</p>
+                                    <div className="flex justify-between items-start mb-0.5">
+                                        <h4 className="text-sm font-bold text-gray-900">Pedido #{delivery.order_id}</h4>
+                                        <div className="flex items-center gap-1 text-[10px] bg-white px-1.5 py-0.5 rounded border border-blue-100 text-blue-700 font-semibold">
+                                            <User className="w-3 h-3" />
+                                            {resolveDriverName(delivery.driver_email)}
+                                        </div>
+                                    </div>
+                                    
+                                    <p className="text-xs text-gray-700 mt-1 leading-snug break-words">
+                                        {delivery.address}
+                                    </p>
+                                    
                                     <div className="flex items-center gap-1 mt-2 text-[10px] text-gray-400">
                                         <Clock className="w-3 h-3" />
                                         Iniciado {formatTimeAgo(delivery.start_time)}
@@ -624,12 +640,19 @@ function App() {
                   ) : (
                       <ul className="space-y-2">
                           {finishedDeliveries.slice(0, 3).map(del => (
-                              <li key={del.id} className="text-xs flex justify-between items-center">
-                                  <span className="text-gray-600 truncate max-w-[150px]">#{del.order_id} - {del.address}</span>
-                                  {del.delivered_at && <span className="text-green-600 font-bold flex items-center gap-1">
-                                      <CheckCircle2 className="w-3 h-3" />
-                                      {new Date(del.delivered_at).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}
-                                  </span>}
+                              <li key={del.id} className="text-xs flex flex-col gap-1 border-b border-gray-100 last:border-0 pb-2 last:pb-0">
+                                  <div className="flex justify-between items-center">
+                                      <span className="font-bold text-gray-700">#{del.order_id}</span>
+                                      <span className="text-green-600 font-bold flex items-center gap-1">
+                                          <CheckCircle2 className="w-3 h-3" />
+                                          {new Date(del.delivered_at!).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}
+                                      </span>
+                                  </div>
+                                  <div className="text-gray-600 break-words leading-tight">{del.address}</div>
+                                  <div className="flex items-center gap-1 text-[10px] text-gray-400">
+                                      <User className="w-3 h-3" />
+                                      {resolveDriverName(del.driver_email)}
+                                  </div>
                               </li>
                           ))}
                       </ul>
