@@ -212,8 +212,26 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
   };
 
   const handleOpenGPS = (delivery: Delivery) => {
-    // 1. Abre o Google Maps
-    window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(delivery.address)}&travelmode=driving`, '_blank');
+    const destination = encodeURIComponent(delivery.address);
+    const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
+
+    // Detecta Android
+    if (/android/i.test(userAgent)) {
+      // Usa o esquema 'google.navigation:' para abrir o app diretamente no modo navegação
+      window.location.href = `google.navigation:q=${destination}`;
+    } 
+    // Detecta iOS (iPhone/iPad)
+    else if (/iPad|iPhone|iPod/.test(userAgent) && !(window as any).MSStream) {
+      // Tenta abrir o app do Google Maps diretamente (esquema comgooglemaps://)
+      // Se não tiver o app, isso pode falhar silenciosamente dependendo do navegador,
+      // mas é a forma correta de evitar a página web intermediária.
+      window.location.href = `comgooglemaps://?daddr=${destination}&directionsmode=driving`;
+    } 
+    // Desktop ou Outros
+    else {
+      // Fallback para web
+      window.open(`https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=driving`, '_blank');
+    }
     
     // 2. Ativa o "Modo Foco" no app para quando o usuário voltar
     setFocusedDeliveryId(delivery.id);
