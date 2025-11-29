@@ -80,11 +80,17 @@ function App() {
     }
   }, [session]);
 
-  // --- REALTIME SUBSCRIPTION ---
+  // --- REALTIME SUBSCRIPTION (OTIMIZADO) ---
   useEffect(() => {
-    if (!session) return;
+    if (!session?.user?.id) return;
     
-    // Canal persistente e único
+    // Limpeza de segurança: remove canais existentes antes de criar um novo
+    supabase.getChannels().forEach(channel => {
+      if (channel.topic === 'realtime:public:deliveries') {
+        supabase.removeChannel(channel);
+      }
+    });
+
     const channel = supabase
       .channel('realtime:public:deliveries')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'deliveries' }, (payload) => {
@@ -92,7 +98,7 @@ function App() {
         if (payload.eventType === 'INSERT') {
             const newDelivery = payload.new as Delivery;
             setDeliveries(prev => {
-                // Remove item otimista (ID negativo) que tenha o mesmo order_id (convertendo para string para garantir)
+                // Remove item otimista (ID negativo) que tenha o mesmo order_id
                 const cleanPrev = prev.filter(d => d.id > 0 || String(d.order_id) !== String(newDelivery.order_id));
                 
                 // Evita duplicatas se o item real já estiver na lista (race condition)
@@ -104,29 +110,25 @@ function App() {
         else if (payload.eventType === 'UPDATE') {
             const updatedDelivery = payload.new as Delivery;
             setDeliveries(prev => prev.map(d => d.id === updatedDelivery.id ? updatedDelivery : d));
-            
-            // Notificação apenas para Admin e quando muda para entregue
-            // Nota: userRole pode não estar atualizado dentro do callback dependendo das deps, mas aqui usamos o estado local
-            if (updatedDelivery.status === 'delivered') {
-                const driverName = resolveDriverName(updatedDelivery.driver_email);
-                // Pequena verificação de segurança para não spammar notificações se não for admin (embora o AdminDashboard que renderiza o toast)
-                // Idealmente userRole estaria nas dependencias, mas para evitar reconexão do socket, omitimos.
-            }
         } 
         else if (payload.eventType === 'DELETE') {
-            setDeliveries(prev => prev.filter(d => d.id !== payload.old.id));
+            // Garante a extração correta do ID, convertendo para string para comparação segura
+            const oldRecord = payload.old as { id: number | string };
+            if (oldRecord && oldRecord.id) {
+                setDeliveries(prev => prev.filter(d => String(d.id) !== String(oldRecord.id)));
+            }
         }
       })
       .subscribe((status) => {
           if (status === 'SUBSCRIBED') {
-              console.log('Conectado ao Realtime das entregas');
+              console.log('Sincronização em tempo real ativa');
           }
       });
       
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [session]); // Removido userRole para evitar reconexões desnecessárias
+  }, [session?.user?.id]); // Depende apenas do ID do usuário para evitar reconexões em refresh de token
 
   const fetchData = async () => {
     fetchSales();
