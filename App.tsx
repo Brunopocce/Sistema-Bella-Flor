@@ -72,9 +72,14 @@ function App() {
         // Refetch all deliveries to ensure consistency
         fetchDeliveries();
         
-        // Show notification for admin when a delivery is completed
-        if (userRole === 'admin' && payload.eventType === 'UPDATE' && payload.new.status === 'delivered') {
-           showNotification(`Pedido #${payload.new.order_id} foi entregue!`);
+        // Show notification for admin
+        if (userRole === 'admin') {
+           if (payload.eventType === 'UPDATE' && payload.new.status === 'delivered') {
+              showNotification(`Pedido #${payload.new.order_id} foi entregue!`);
+           }
+           if (payload.eventType === 'DELETE') {
+              showNotification(`Entrega #${(payload.old as Delivery).order_id} foi cancelada.`);
+           }
         }
       })
       .subscribe();
@@ -200,22 +205,40 @@ function App() {
       status: 'in_route' as const,
       start_time: new Date().toISOString()
     };
-    const { error } = await supabase.from('deliveries').insert([newDelivery]);
+    const { data, error } = await supabase.from('deliveries').insert([newDelivery]).select();
     if (error) {
         if (error.message.includes("Could not find the table")) {
             alert("⚠️ Tabela 'deliveries' não encontrada!\nExecute o script 'database.sql' no Supabase.");
         } else {
             alert("Erro ao iniciar entrega: " + error.message);
         }
+    } else if (data) {
+        setDeliveries(prev => [data[0], ...prev]);
     }
   };
 
   const handleConfirmDelivery = async (deliveryId: number) => {
-     const { error } = await supabase
+     const { data, error } = await supabase
         .from('deliveries')
         .update({ status: 'delivered', delivered_at: new Date().toISOString() })
-        .eq('id', deliveryId);
-     if (error) alert("Erro ao confirmar entrega: " + error.message);
+        .eq('id', deliveryId)
+        .select();
+
+     if (error) {
+       alert("Erro ao confirmar entrega: " + error.message);
+     } else if (data) {
+       setDeliveries(prev => prev.map(d => (d.id === deliveryId ? data[0] : d)));
+     }
+  };
+
+  const handleCancelDelivery = async (deliveryId: number) => {
+    const { error } = await supabase.from('deliveries').delete().eq('id', deliveryId);
+    if (error) {
+      alert("Erro ao cancelar entrega: " + error.message);
+    } else {
+      // Update local state for immediate feedback, real-time will sync eventually
+      setDeliveries(prev => prev.filter(d => d.id !== deliveryId));
+    }
   };
 
   // --- MEMOIZED CALCULATIONS ---
@@ -359,6 +382,7 @@ function App() {
         onStartDelivery={handleStartDelivery}
         deliveries={finishedDeliveries}
         activeDeliveries={activeDeliveries}
+        onCancelDelivery={handleCancelDelivery}
       />
     );
   }

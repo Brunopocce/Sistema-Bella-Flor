@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { MapPin, Navigation, CheckCircle2, Package, LogOut, Clock, RotateCcw, Search, Home, X, ChevronDown, ChevronUp, Plus, Download } from 'lucide-react';
+import { MapPin, Navigation, CheckCircle2, Package, LogOut, Clock, RotateCcw, Search, Home, X, ChevronDown, ChevronUp, Plus, Download, AlertTriangle } from 'lucide-react';
 import { Delivery } from '../types';
 
 declare global {
@@ -12,6 +12,7 @@ interface DriverDashboardProps {
   onStartDelivery: (orderId: string, address: string) => Promise<void>;
   deliveries: Delivery[]; // Finished deliveries
   activeDeliveries: Delivery[]; // In-route deliveries
+  onCancelDelivery: (deliveryId: number) => Promise<void>;
 }
 
 interface AddressSuggestion {
@@ -21,12 +22,23 @@ interface AddressSuggestion {
   address: { road?: string; suburb?: string; city?: string; town?: string; municipality?: string; village?: string; county?: string; state?: string; postcode?: string; };
 }
 
+// Custom hook to get previous value of a prop or state
+function usePrevious<T>(value: T) {
+  // FIX: `useRef<T>()` requires an initial value when a generic type is provided. Initializing with `undefined` and adjusting the ref's type to `T | undefined` to solve the error.
+  const ref = useRef<T | undefined>(undefined);
+  useEffect(() => {
+    ref.current = value;
+  }, [value]);
+  return ref.current;
+}
+
 export const DriverDashboard: React.FC<DriverDashboardProps> = ({ 
   onLogout, 
   onConfirmDelivery, 
   onStartDelivery, 
   deliveries,
-  activeDeliveries 
+  activeDeliveries,
+  onCancelDelivery
 }) => {
   const [orderId, setOrderId] = useState('');
   const [addressQuery, setAddressQuery] = useState('');
@@ -35,12 +47,36 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(true);
+
+  // Cancel Modal State
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
+  const [deliveryToCancel, setDeliveryToCancel] = useState<Delivery | null>(null);
   
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const numberInputRef = useRef<HTMLInputElement>(null);
 
+  const alertAudioRef = useRef<HTMLAudioElement | null>(null);
+  const prevActiveDeliveries = usePrevious(activeDeliveries);
+
   const ALLOWED_CITIES = ['sorocaba', 'votorantim', 'araçoiaba da serra', 'salto de pirapora'];
+
+  useEffect(() => {
+    // Initialize audio on component mount
+    alertAudioRef.current = new Audio('/alert.mp3');
+    alertAudioRef.current.volume = 0.8;
+  }, []);
+
+  useEffect(() => {
+    if (prevActiveDeliveries && activeDeliveries.length > prevActiveDeliveries.length) {
+      // New delivery detected, play sound
+      alertAudioRef.current?.play().catch(error => {
+        console.warn("Audio playback failed, likely due to browser autoplay policies.", error);
+      });
+      // Scroll to top to show the new delivery
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [activeDeliveries, prevActiveDeliveries]);
 
   useEffect(() => {
     setIsFormOpen(activeDeliveries.length === 0);
@@ -66,8 +102,11 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
       if (data.erro || !isCityAllowed(data.localidade)) {
         setSuggestions([]);
       } else {
+        const displayNameParts = [data.logradouro, data.bairro, data.localidade, data.uf].filter(Boolean);
         const suggestion: AddressSuggestion = {
-          place_id: data.cep, display_name: `${data.logradouro}, ${data.bairro}, ${data.localidade} - ${data.uf}`, source: 'viacep',
+          place_id: data.cep,
+          display_name: displayNameParts.join(', '),
+          source: 'viacep',
           address: { road: data.logradouro, suburb: data.bairro, city: data.localidade, state: data.uf, postcode: data.cep }
         };
         setSuggestions([suggestion]);
@@ -105,7 +144,7 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
   };
 
   const selectAddress = (suggestion: AddressSuggestion) => {
-    let text = `${suggestion.address.road} - ${suggestion.address.suburb}, ${suggestion.address.city}`;
+    let text = `${suggestion.address.road || suggestion.address.suburb} - ${suggestion.address.suburb}, ${suggestion.address.city}`;
     setAddressQuery(text);
     setShowSuggestions(false);
     setTimeout(() => numberInputRef.current?.focus(), 100);
@@ -113,7 +152,20 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
 
   const formatSuggestionDisplay = (suggestion: AddressSuggestion) => {
     if (suggestion.source === 'viacep') {
-      return { main: suggestion.address.road || 'Rua não identificada', secondary: `${suggestion.address.suburb}, ${suggestion.address.city} (CEP: ${suggestion.address.postcode})` };
+        const { road, suburb, city, postcode } = suggestion.address;
+        const mainText = road || suburb;
+        let secondaryText = '';
+
+        if (mainText === road && suburb) { // Main text is street, so show suburb and city in secondary
+            secondaryText = `${suburb}, ${city} (CEP: ${postcode})`;
+        } else { // Main text is suburb, so just show city in secondary
+            secondaryText = `${city} (CEP: ${postcode})`;
+        }
+        
+        return { 
+            main: mainText || 'Endereço Identificado', 
+            secondary: secondaryText
+        };
     }
     const { road, suburb, city, town, municipality, state } = suggestion.address;
     const main = road || suggestion.display_name.split(',')[0];
@@ -126,6 +178,23 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
     const fullDestination = streetNumber ? `${addressQuery}, ${streetNumber}` : addressQuery;
     await onStartDelivery(orderId, fullDestination);
     setOrderId(''); setAddressQuery(''); setStreetNumber(''); setIsFormOpen(false);
+  };
+
+  const openCancelModal = (delivery: Delivery) => {
+    setDeliveryToCancel(delivery);
+    setIsCancelModalOpen(true);
+  };
+
+  const closeCancelModal = () => {
+    setDeliveryToCancel(null);
+    setIsCancelModalOpen(false);
+  };
+
+  const handleConfirmCancel = async () => {
+    if (deliveryToCancel) {
+      await onCancelDelivery(deliveryToCancel.id);
+      closeCancelModal();
+    }
   };
 
   const openGPS = (address: string) => window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}&travelmode=driving`, '_blank');
@@ -168,6 +237,15 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
                         <div className="grid grid-cols-2 gap-3 mt-4">
                             <button onClick={() => openGPS(delivery.address)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors active:scale-[0.98]"><Navigation className="w-4 h-4" />Abrir GPS</button>
                             <button onClick={() => onConfirmDelivery(delivery.id)} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors active:scale-[0.98]"><CheckCircle2 className="w-4 h-4" />Entregue</button>
+                        </div>
+                        <div className="border-t border-gray-100 mt-3 pt-3">
+                            <button 
+                                onClick={() => openCancelModal(delivery)}
+                                className="w-full text-center text-sm font-semibold text-red-500 hover:text-red-700 py-2 rounded-lg hover:bg-red-50 transition-colors flex items-center justify-center gap-1.5"
+                            >
+                                <X className="w-4 h-4" />
+                                Cancelar Entrega
+                            </button>
                         </div>
                      </div>
                   </div>
@@ -223,6 +301,37 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
           </div>
           {todaysDeliveries.length === 0 ? (<div className="text-center py-6 bg-transparent"><p className="text-gray-400 text-xs">Nenhuma entrega finalizada hoje.</p></div>) : (<div className="space-y-3">{todaysDeliveries.slice(0, 5).map((delivery) => (<div key={delivery.id} className="bg-white p-3 rounded-lg border border-gray-100 flex justify-between items-center"><div><div className="flex items-center gap-2 mb-1"><span className="font-bold text-gray-700 text-sm">#{delivery.order_id}</span><CheckCircle2 className="w-3 h-3 text-green-500" /></div><p className="text-[10px] text-gray-400 truncate max-w-[200px]">{delivery.address}</p></div><div className="text-right"><span className="text-[10px] text-gray-400 font-mono">{formatTime(delivery.delivered_at)}</span></div></div>))}</div>)}
         </div>
+
+        {/* Cancel Confirmation Modal */}
+        {isCancelModalOpen && deliveryToCancel && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
+              <div className="p-6 text-center">
+                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <AlertTriangle className="w-6 h-6 text-red-600" />
+                </div>
+                <h3 className="text-lg font-bold text-gray-900 mb-2">Cancelar Entrega?</h3>
+                <p className="text-sm text-gray-500 mb-6">
+                  O pedido <strong>#{deliveryToCancel.order_id}</strong> será removido da sua rota. Tem certeza?
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={closeCancelModal}
+                    className="w-full bg-white border border-gray-300 text-gray-700 font-bold py-2.5 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    Manter
+                  </button>
+                  <button
+                    onClick={handleConfirmCancel}
+                    className="w-full bg-red-600 text-white font-bold py-2.5 rounded-lg hover:bg-red-700 transition-colors shadow-sm"
+                  >
+                    Sim, Cancelar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
