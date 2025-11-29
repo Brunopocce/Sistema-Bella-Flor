@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { DollarSign, Wallet, LayoutDashboard, FileText, Calendar, LogOut, Bike, MapPin, CheckCircle2, Clock, X, Download, User, ChevronDown, ChevronRight, ArrowLeftRight, RefreshCw } from 'lucide-react';
+import { DollarSign, Wallet, LayoutDashboard, FileText, Calendar, LogOut, Bike, MapPin, CheckCircle2, Clock, X, Download, User, ChevronDown, ChevronRight, ArrowLeftRight, RefreshCw, HandCoins } from 'lucide-react';
 import { SalesForm } from './components/SalesForm';
 import { SalesList } from './components/SalesList';
 import { PaymentForm } from './components/PaymentForm';
@@ -35,6 +35,10 @@ function App() {
   // Export Modal State
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportMonth, setExportMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
+
+  // Quick Pay Modal State
+  const [quickPayData, setQuickPayData] = useState<{ person: 'Bruno' | 'Daniele', value: number } | null>(null);
+  const [isProcessingPay, setIsProcessingPay] = useState(false);
 
   // State for Delivery Accordion
   const [expandedDeliveryDates, setExpandedDeliveryDates] = useState<string[]>([]);
@@ -261,6 +265,36 @@ function App() {
       } else {
           setPayments(prev => prev.filter(p => p.id !== id));
       }
+    }
+  };
+
+  // --- QUICK PAY HANDLER ---
+  const handleOpenQuickPay = (person: 'Bruno' | 'Daniele', balance: number) => {
+    if (balance <= 0) {
+      alert("Não há saldo pendente para realizar pagamento.");
+      return;
+    }
+    setQuickPayData({ person, value: balance });
+  };
+
+  const handleConfirmQuickPay = async () => {
+    if (!quickPayData) return;
+    
+    setIsProcessingPay(true);
+    const today = new Date().toISOString().split('T')[0];
+
+    try {
+      await handleAddPayment({
+        date: today,
+        person: quickPayData.person,
+        value: quickPayData.value
+      });
+      showNotification(`Pagamento de saldo registrado para ${quickPayData.person}!`);
+      setQuickPayData(null);
+    } catch (e) {
+      alert("Erro ao processar pagamento rápido.");
+    } finally {
+      setIsProcessingPay(false);
     }
   };
 
@@ -615,6 +649,38 @@ function App() {
         </div>
       )}
 
+      {/* Quick Pay Modal */}
+      {quickPayData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
+                <div className="bg-white p-6 text-center">
+                    <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <HandCoins className="w-8 h-8 text-green-600" />
+                    </div>
+                    <h3 className="text-xl font-bold text-gray-900 mb-1">Confirmar Pagamento</h3>
+                    <p className="text-sm text-gray-500 mb-6">
+                        Registrar pagamento total de <span className="font-bold text-gray-900">{formatCurrency(quickPayData.value)}</span> para <span className="font-bold text-gray-900">{quickPayData.person}</span>?
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                        <button 
+                            onClick={() => setQuickPayData(null)}
+                            className="w-full bg-gray-100 text-gray-700 font-bold py-3 rounded-lg hover:bg-gray-200 transition-colors"
+                        >
+                            Cancelar
+                        </button>
+                        <button 
+                            onClick={handleConfirmQuickPay}
+                            disabled={isProcessingPay}
+                            className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg transition-colors shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
+                        >
+                            {isProcessingPay ? 'Processando...' : 'Confirmar'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+      )}
+
       {isExportModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
@@ -736,6 +802,8 @@ function App() {
               icon={Wallet}
               colorClass="text-blue-600 bg-blue-100"
               subValue={`Pago: ${formatCurrency(stats.paidBruno)}`}
+              onAction={() => handleOpenQuickPay('Bruno', stats.balanceBruno)}
+              actionLabel="Pagar Saldo"
             />
             <StatCard 
               title="Daniele (Saldo)" 
@@ -743,6 +811,8 @@ function App() {
               icon={Wallet}
               colorClass="text-purple-600 bg-purple-100"
               subValue={`Pago: ${formatCurrency(stats.paidDaniele)}`}
+              onAction={() => handleOpenQuickPay('Daniele', stats.balanceDaniele)}
+              actionLabel="Pagar Saldo"
             />
           </div>
         </div>
