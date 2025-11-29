@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { MapPin, Navigation, CheckCircle2, Package, LogOut, Clock, RotateCcw, Search, Home, X, ChevronDown, ChevronUp, Plus, Download, AlertTriangle } from 'lucide-react';
+import { MapPin, Navigation, CheckCircle2, Package, LogOut, Clock, RotateCcw, Search, Home, X, ChevronDown, ChevronUp, Plus, Download, AlertTriangle, ArrowLeft } from 'lucide-react';
 import { Delivery } from '../types';
 
 declare global {
@@ -53,6 +53,10 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
   // Cancel Modal State
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
   const [deliveryToCancel, setDeliveryToCancel] = useState<Delivery | null>(null);
+
+  // Focus Mode State (Overlay after opening GPS)
+  const [focusedDeliveryId, setFocusedDeliveryId] = useState<number | null>(null);
+  const focusedDelivery = useMemo(() => activeDeliveries.find(d => d.id === focusedDeliveryId), [activeDeliveries, focusedDeliveryId]);
   
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -93,6 +97,13 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [wrapperRef]);
+
+  // Se a entrega focada sair da lista (foi concluída ou cancelada), fecha o modo foco
+  useEffect(() => {
+    if (focusedDeliveryId && !activeDeliveries.find(d => d.id === focusedDeliveryId)) {
+        setFocusedDeliveryId(null);
+    }
+  }, [activeDeliveries, focusedDeliveryId]);
 
   const isCityAllowed = (cityName?: string) => cityName ? ALLOWED_CITIES.some(allowed => cityName.toLowerCase().includes(allowed)) : false;
 
@@ -200,7 +211,14 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
     }
   };
 
-  const openGPS = (address: string) => window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}&travelmode=driving`, '_blank');
+  const handleOpenGPS = (delivery: Delivery) => {
+    // 1. Abre o Google Maps
+    window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(delivery.address)}&travelmode=driving`, '_blank');
+    
+    // 2. Ativa o "Modo Foco" no app para quando o usuário voltar
+    setFocusedDeliveryId(delivery.id);
+  };
+
   const formatTime = (isoString: string | null) => isoString ? new Date(isoString).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '-';
 
   const todaysDeliveries = useMemo(() => deliveries.filter(d => new Date().toDateString() === new Date(d.delivered_at || '').toDateString()), [deliveries]);
@@ -217,6 +235,59 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
     doc.save(`relatorio-entregas-${driverName}-${date.replace(/\//g, '-')}.pdf`);
   };
 
+  const handleConfirmFocusedDelivery = async () => {
+      if (focusedDeliveryId) {
+          await onConfirmDelivery(focusedDeliveryId);
+          setFocusedDeliveryId(null);
+      }
+  };
+
+  // --- RENDER ---
+
+  // 1. MODO FOCO (Overlay de Tela Cheia)
+  if (focusedDelivery) {
+      return (
+          <div className="fixed inset-0 z-50 bg-white flex flex-col animate-in fade-in duration-300">
+              <div className="flex-1 flex flex-col p-6 items-center justify-center text-center space-y-6">
+                  
+                  <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center animate-bounce">
+                      <MapPin className="w-10 h-10 text-green-600" />
+                  </div>
+
+                  <div className="space-y-2">
+                      <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest">Aguardando Retorno</h2>
+                      <h1 className="text-2xl font-black text-gray-900 leading-tight">{focusedDelivery.address}</h1>
+                      <p className="text-lg font-medium text-brand-600">Pedido #{focusedDelivery.order_id}</p>
+                  </div>
+
+                  <div className="w-full max-w-xs pt-8">
+                      <button 
+                          onClick={handleConfirmFocusedDelivery}
+                          className="w-full bg-green-600 hover:bg-green-700 text-white font-black text-xl py-6 rounded-2xl shadow-xl hover:shadow-2xl transition-all active:scale-95 flex items-center justify-center gap-3"
+                      >
+                          <CheckCircle2 className="w-8 h-8" />
+                          CONFIRMAR ENTREGA
+                      </button>
+                      <p className="text-xs text-gray-400 mt-4">
+                          Toque acima quando chegar ao destino
+                      </p>
+                  </div>
+              </div>
+
+              <div className="p-6">
+                  <button 
+                      onClick={() => setFocusedDeliveryId(null)}
+                      className="w-full border border-gray-200 text-gray-500 font-bold py-4 rounded-xl hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+                  >
+                      <ArrowLeft className="w-5 h-5" />
+                      Voltar para lista
+                  </button>
+              </div>
+          </div>
+      );
+  }
+
+  // 2. DASHBOARD PADRÃO
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
@@ -246,7 +317,7 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
                         <div className="flex justify-between items-start mb-2"><span className="bg-blue-50 text-blue-700 text-xs font-bold px-2 py-1 rounded-md">Pedido #{delivery.order_id}</span><span className="text-xs text-gray-400 font-medium flex items-center gap-1"><Clock className="w-3 h-3" /> {formatTime(delivery.start_time)}</span></div>
                         <p className="text-gray-900 font-bold text-lg leading-tight mb-1">{delivery.address}</p>
                         <div className="grid grid-cols-2 gap-3 mt-4">
-                            <button onClick={() => openGPS(delivery.address)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors active:scale-[0.98]"><Navigation className="w-4 h-4" />Abrir GPS</button>
+                            <button onClick={() => handleOpenGPS(delivery)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors active:scale-[0.98]"><Navigation className="w-4 h-4" />Abrir GPS</button>
                             <button onClick={() => onConfirmDelivery(delivery.id)} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors active:scale-[0.98]"><CheckCircle2 className="w-4 h-4" />Entregue</button>
                         </div>
                         <div className="border-t border-gray-100 mt-3 pt-3">
