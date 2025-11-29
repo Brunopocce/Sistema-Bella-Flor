@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { DollarSign, Wallet, LayoutDashboard, Download, Calendar, LogOut, Bike, MapPin, CheckCircle2, Clock } from 'lucide-react';
+import { DollarSign, Wallet, LayoutDashboard, FileText, Calendar, LogOut, Bike, MapPin, CheckCircle2, Clock, X, Download } from 'lucide-react';
 import { SalesForm } from './components/SalesForm';
 import { SalesList } from './components/SalesList';
 import { PaymentForm } from './components/PaymentForm';
@@ -10,6 +10,11 @@ import { DriverDashboard } from './components/DriverDashboard';
 import { Sale, SummaryStats, Payment, UserRole, Delivery } from './types';
 import { supabase } from './supabaseClient';
 import { Session } from '@supabase/supabase-js';
+
+// Declaration for jsPDF
+declare global {
+  interface Window { jspdf: any; }
+}
 
 function App() {
   // --- STATE MANAGEMENT ---
@@ -24,6 +29,10 @@ function App() {
   
   // UI states
   const [notification, setNotification] = useState<{message: string, show: boolean}>({ message: '', show: false });
+  
+  // Export Modal State
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportMonth, setExportMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
 
   // --- AUTHENTICATION & DATA FETCHING ---
   useEffect(() => {
@@ -39,10 +48,7 @@ function App() {
       setSession(session);
       setUserRole((session?.user?.user_metadata?.role as UserRole) || null);
       if (_event === 'SIGNED_OUT') {
-          // Clear all data on sign out
-          setSales([]);
-          setPayments([]);
-          setDeliveries([]);
+          // Clear all data on sign out logic handled in handleLogout as well
       }
     });
 
@@ -63,7 +69,6 @@ function App() {
     const deliveriesChannel = supabase
       .channel('public:deliveries')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'deliveries' }, (payload) => {
-        console.log('Real-time change received!', payload);
         // Refetch all deliveries to ensure consistency
         fetchDeliveries();
         
@@ -114,6 +119,12 @@ function App() {
 
   // --- HANDLER FUNCTIONS (CRUD) ---
   const handleLogout = async () => {
+    // Force clear state immediately for better UX
+    setSession(null);
+    setUserRole(null);
+    setSales([]);
+    setPayments([]);
+    setDeliveries([]);
     await supabase.auth.signOut();
   };
 
@@ -192,7 +203,6 @@ function App() {
             alert("Erro ao iniciar entrega: " + error.message);
         }
     }
-    // Realtime will update the state
   };
 
   const handleConfirmDelivery = async (deliveryId: number) => {
@@ -201,7 +211,6 @@ function App() {
         .update({ status: 'delivered', delivered_at: new Date().toISOString() })
         .eq('id', deliveryId);
      if (error) alert("Erro ao confirmar entrega: " + error.message);
-     // Realtime will update the state
   };
 
   // --- MEMOIZED CALCULATIONS ---
@@ -255,24 +264,76 @@ function App() {
     return `${hours}h atrás`;
   };
 
-  const exportData = () => {
-    // Basic CSV Export logic (placeholder for full implementation)
-    if (sales.length === 0) {
-        alert("Não há dados para exportar.");
+  const generateMonthlyReport = () => {
+    const [year, month] = exportMonth.split('-');
+    
+    // Filter sales for the selected month
+    const filteredSales = sales.filter(s => s.date.startsWith(exportMonth)).sort((a, b) => a.date.localeCompare(b.date));
+    
+    if (filteredSales.length === 0) {
+        alert("Não há vendas registradas neste mês para gerar o relatório.");
         return;
     }
-    const headers = ["ID", "Data", "Pedido", "Valor", "Taxa Entrega", "Criado Em"];
-    const csvContent = "data:text/csv;charset=utf-8," 
-        + headers.join(",") + "\n"
-        + sales.map(e => `${e.id},${e.date},${e.order_id || ''},${e.value},${e.delivery_fee || 0},${e.created_at}`).join("\n");
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    const monthName = new Date(parseInt(year), parseInt(month) - 1).toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+
+    // Header
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(22);
+    doc.setTextColor(219, 39, 119); // brand-600
+    doc.text("BellaFlor", 105, 20, { align: "center" });
     
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "vendas_bellaflor.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    doc.setFontSize(14);
+    doc.setTextColor(40, 40, 40);
+    doc.text(`Relatório de Vendas - ${monthName.charAt(0).toUpperCase() + monthName.slice(1)}`, 105, 30, { align: "center" });
+
+    // Summary
+    const totalSales = filteredSales.reduce((acc, curr) => acc + curr.value, 0);
+    const totalDeliveryFees = filteredSales.reduce((acc, curr) => acc + (curr.delivery_fee || 0), 0);
+    const totalCommission = totalSales * 0.15;
+
+    doc.setFontSize(10);
+    doc.setDrawColor(200, 200, 200);
+    doc.setFillColor(250, 250, 250);
+    doc.rect(14, 38, 182, 20, 'FD');
+    
+    doc.text(`Vendas Totais: ${formatCurrency(totalSales)}`, 20, 50);
+    doc.text(`Comissão (15%): ${formatCurrency(totalCommission)}`, 85, 50);
+    doc.text(`Taxas de Entrega: ${formatCurrency(totalDeliveryFees)}`, 150, 50);
+
+    // Table
+    const tableColumns = ["Data", "Pedido", "Valor Venda", "Comissão (15%)", "Taxa Entrega"];
+    const tableRows = filteredSales.map(s => [
+        new Date(s.date).toLocaleDateString('pt-BR'),
+        s.order_id || '-',
+        formatCurrency(s.value),
+        formatCurrency(s.value * 0.15),
+        s.delivery_fee ? formatCurrency(s.delivery_fee) : '-'
+    ]);
+
+    (doc as any).autoTable({
+        startY: 65,
+        head: [tableColumns],
+        body: tableRows,
+        theme: 'striped',
+        headStyles: { fillColor: [219, 39, 119] }, // brand-600
+        foot: [['TOTAIS', '', formatCurrency(totalSales), formatCurrency(totalCommission), formatCurrency(totalDeliveryFees)]],
+        footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' }
+    });
+
+    // Footer
+    const pageCount = doc.internal.getNumberOfPages();
+    doc.setFontSize(8);
+    for(let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.text(`Gerado em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}`, 14, doc.internal.pageSize.height - 10);
+        doc.text(`Página ${i} de ${pageCount}`, doc.internal.pageSize.width - 25, doc.internal.pageSize.height - 10);
+    }
+
+    doc.save(`relatorio-bellaflor-${exportMonth}.pdf`);
+    setIsExportModalOpen(false);
   };
 
 
@@ -313,6 +374,38 @@ function App() {
         </div>
       )}
 
+      {/* Export Modal */}
+      {isExportModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
+                <div className="bg-brand-600 px-6 py-4 flex justify-between items-center">
+                    <h3 className="text-white font-bold text-lg flex items-center gap-2">
+                        <FileText className="w-5 h-5" /> Relatório Mensal
+                    </h3>
+                    <button onClick={() => setIsExportModalOpen(false)} className="text-white/80 hover:text-white">
+                        <X className="w-5 h-5" />
+                    </button>
+                </div>
+                <div className="p-6">
+                    <label className="block text-sm font-bold text-gray-700 mb-2">Selecione o Mês</label>
+                    <input 
+                        type="month" 
+                        value={exportMonth}
+                        onChange={(e) => setExportMonth(e.target.value)}
+                        className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none mb-6"
+                    />
+                    <button 
+                        onClick={generateMonthlyReport}
+                        className="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-2"
+                    >
+                        <Download className="w-4 h-4" />
+                        Baixar PDF
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -327,11 +420,11 @@ function App() {
           </div>
           <div className="flex items-center gap-4">
             <button 
-              onClick={exportData}
+              onClick={() => setIsExportModalOpen(true)}
               className="text-gray-500 hover:text-brand-600 transition-colors flex items-center gap-1 text-sm font-medium"
             >
-              <Download className="w-4 h-4" />
-              <span className="hidden sm:inline">Exportar CSV</span>
+              <FileText className="w-4 h-4" />
+              <span className="hidden sm:inline">Exportar Relatório</span>
             </button>
             <div className="h-6 w-px bg-gray-300 hidden sm:block"></div>
             <button 
