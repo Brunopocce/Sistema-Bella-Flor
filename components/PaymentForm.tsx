@@ -3,13 +3,14 @@ import { CheckCircle2, DollarSign } from 'lucide-react';
 import { Payment } from '../types';
 
 interface PaymentFormProps {
-  onAddPayment: (payment: Omit<Payment, 'id' | 'createdAt'>) => void;
+  onAddPayment: (payment: Omit<Payment, 'id' | 'created_at'>) => Promise<void>;
 }
 
 export const PaymentForm: React.FC<PaymentFormProps> = ({ onAddPayment }) => {
   const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [person, setPerson] = useState<'Bruno' | 'Daniele'>('Bruno');
   const [rawValue, setRawValue] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleValueChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value.replace(/\D/g, '');
@@ -18,28 +19,29 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({ onAddPayment }) => {
 
   const getDisplayValue = () => {
     if (!rawValue) return '';
-    const val = parseInt(rawValue) / 100;
-    return val.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+    return (parseInt(rawValue) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!rawValue || !date) return;
+    if (!rawValue || !date || isSubmitting) return;
 
     const cleanValue = parseInt(rawValue) / 100;
 
-    if (isNaN(cleanValue) || cleanValue === 0) {
+    if (isNaN(cleanValue) || cleanValue <= 0) {
       alert("Por favor insira um valor válido.");
       return;
     }
 
-    onAddPayment({
+    setIsSubmitting(true);
+    await onAddPayment({
       date,
       person,
       value: cleanValue,
     });
 
     setRawValue('');
+    setIsSubmitting(false);
   };
 
   return (
@@ -96,10 +98,11 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({ onAddPayment }) => {
 
         <button
           type="submit"
-          className="w-full mt-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-sm hover:shadow-md text-sm"
+          disabled={isSubmitting}
+          className="w-full mt-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-sm hover:shadow-md text-sm disabled:opacity-50"
         >
           <CheckCircle2 className="w-4 h-4" />
-          Confirmar Pagto
+          {isSubmitting ? 'Confirmando...' : 'Confirmar Pagto'}
         </button>
       </form>
     </div>

@@ -3,7 +3,7 @@ import { PlusCircle, Save } from 'lucide-react';
 import { Sale } from '../types';
 
 interface SalesFormProps {
-  onAddSale: (sale: Omit<Sale, 'id' | 'createdAt'>) => void;
+  onAddSale: (sale: Omit<Sale, 'id' | 'created_at'>) => Promise<void>;
 }
 
 export const SalesForm: React.FC<SalesFormProps> = ({ onAddSale }) => {
@@ -11,9 +11,9 @@ export const SalesForm: React.FC<SalesFormProps> = ({ onAddSale }) => {
   const [rawValue, setRawValue] = useState<string>(''); // Stores digits only: "5490"
   const [rawDeliveryFee, setRawDeliveryFee] = useState<string>(''); // Stores digits only: "1000"
   const [orderId, setOrderId] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleValueChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    // Remove everything that is not a digit
     const val = e.target.value.replace(/\D/g, '');
     setRawValue(val);
   };
@@ -29,29 +29,31 @@ export const SalesForm: React.FC<SalesFormProps> = ({ onAddSale }) => {
     return val.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!rawValue || !date) return;
+    if (!rawValue || !date || isSubmitting) return;
 
     const cleanValue = parseInt(rawValue) / 100;
     const cleanDeliveryFee = rawDeliveryFee ? parseInt(rawDeliveryFee) / 100 : 0;
 
-    if (isNaN(cleanValue) || cleanValue === 0) {
+    if (isNaN(cleanValue) || cleanValue <= 0) {
       alert("Por favor insira um valor válido para a venda.");
       return;
     }
 
-    onAddSale({
+    setIsSubmitting(true);
+    await onAddSale({
       date,
       value: cleanValue,
-      deliveryFee: cleanDeliveryFee,
-      orderId
+      delivery_fee: cleanDeliveryFee,
+      order_id: orderId || undefined
     });
 
     // Reset form
     setRawValue('');
     setRawDeliveryFee('');
     setOrderId('');
+    setIsSubmitting(false);
   };
 
   return (
@@ -120,10 +122,11 @@ export const SalesForm: React.FC<SalesFormProps> = ({ onAddSale }) => {
         <div className="md:col-span-1">
           <button
             type="submit"
-            className="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
+            disabled={isSubmitting}
+            className="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-md hover:shadow-lg disabled:opacity-50"
           >
             <Save className="w-4 h-4" />
-            Adicionar
+            {isSubmitting ? 'Salvando...' : 'Adicionar'}
           </button>
         </div>
       </form>
