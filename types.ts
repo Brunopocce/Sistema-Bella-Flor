@@ -27,6 +27,7 @@ export interface Delivery {
   delivered_at: string | null; // ISO 8601 timestamp string, null if in route
   created_at: string;
   driver_email?: string; // Identifica qual entregador realizou a entrega
+  delivery_fee?: number; // Valor da taxa que o entregador recebe
 }
 
 export type UserRole = 'admin' | 'driver';

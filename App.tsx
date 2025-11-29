@@ -243,7 +243,7 @@ function App() {
     }
   };
 
-  const handleStartDelivery = async (orderId: string, address: string) => {
+  const handleStartDelivery = async (orderId: string, address: string, deliveryFee: number) => {
     // 1. Create a Temporary Delivery Object for Optimistic UI
     // Use a negative ID to avoid collision with real DB IDs
     const tempId = -1 * Date.now(); 
@@ -256,7 +256,8 @@ function App() {
       start_time: new Date().toISOString(),
       created_at: new Date().toISOString(),
       delivered_at: null,
-      driver_email: session?.user?.email 
+      driver_email: session?.user?.email,
+      delivery_fee: deliveryFee 
     };
 
     // 2. Update UI Immediately (Optimistic Update)
@@ -268,7 +269,8 @@ function App() {
         address,
         status: 'in_route',
         start_time: new Date().toISOString(),
-        driver_email: session?.user?.email
+        driver_email: session?.user?.email,
+        delivery_fee: deliveryFee
     }]);
     
     // 4. Handle Errors
@@ -280,6 +282,8 @@ function App() {
             alert("⚠️ Tabela 'deliveries' não encontrada!\nExecute o script 'database.sql' no Supabase.");
         } else if (error.message.includes("driver_email")) {
             alert("⚠️ Erro de Banco de Dados!\n\nVocê precisa adicionar a coluna 'driver_email' na tabela 'deliveries'.\n\nVá no SQL Editor do Supabase e rode:\nALTER TABLE deliveries ADD COLUMN driver_email text;");
+        } else if (error.message.includes("delivery_fee")) {
+            alert("⚠️ Erro de Banco de Dados!\n\nVocê precisa adicionar a coluna 'delivery_fee' na tabela 'deliveries'.\n\nVá no SQL Editor do Supabase e rode:\nALTER TABLE deliveries ADD COLUMN delivery_fee numeric;");
         } else {
             alert("Erro ao iniciar entrega: " + error.message);
         }

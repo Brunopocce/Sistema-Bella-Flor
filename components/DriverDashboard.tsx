@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { MapPin, Navigation, CheckCircle2, Package, LogOut, Clock, RotateCcw, Search, Home, X, ChevronDown, ChevronUp, Plus, Download, AlertTriangle, ArrowLeft, Loader2 } from 'lucide-react';
+import { MapPin, Navigation, CheckCircle2, Package, LogOut, Clock, RotateCcw, Search, Home, X, ChevronDown, ChevronUp, Plus, Download, AlertTriangle, ArrowLeft, Loader2, DollarSign } from 'lucide-react';
 import { Delivery } from '../types';
 
 declare global {
@@ -9,7 +9,7 @@ declare global {
 interface DriverDashboardProps {
   onLogout: () => void;
   onConfirmDelivery: (deliveryId: number) => Promise<void>;
-  onStartDelivery: (orderId: string, address: string) => Promise<void>;
+  onStartDelivery: (orderId: string, address: string, deliveryFee: number) => Promise<void>;
   deliveries: Delivery[]; // Finished deliveries
   activeDeliveries: Delivery[]; // In-route deliveries
   onCancelDelivery: (deliveryId: number) => Promise<void>;
@@ -43,6 +43,7 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
   driverName = 'Entregador'
 }) => {
   const [orderId, setOrderId] = useState('');
+  const [deliveryFee, setDeliveryFee] = useState('');
   const [addressQuery, setAddressQuery] = useState('');
   const [streetNumber, setStreetNumber] = useState('');
   const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
@@ -137,7 +138,11 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
     setIsSearching(true);
     try {
       const viewbox = "-47.60,-23.35,-47.30,-23.65";
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&addressdetails=1&limit=20&countrycodes=br&viewbox=${viewbox}&bounded=1`);
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&addressdetails=1&limit=20&countrycodes=br&viewbox=${viewbox}&bounded=1`, {
+        headers: {
+            "Accept-Language": "pt-BR"
+        }
+      });
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       const data: any[] = await res.json();
       const filtered = data
@@ -148,8 +153,12 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
         });
       setSuggestions(filtered.slice(0, 5));
       setShowSuggestions(true);
-    } catch (error) { console.error("Erro ao buscar endereços:", error); }
-    finally { setIsSearching(false); }
+    } catch (error) { 
+        console.error("Erro ao buscar endereços:", error);
+        setSuggestions([]);
+    } finally { 
+        setIsSearching(false); 
+    }
   };
 
   const handleAddressChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -158,6 +167,16 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
     if (debounceRef.current) clearTimeout(debounceRef.current);
     const isCep = val.replace(/\D/g, '').length === 8;
     debounceRef.current = setTimeout(() => isCep ? fetchViaCEP(val) : fetchNominatim(val), 400);
+  };
+
+  const handleFeeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value.replace(/\D/g, '');
+    setDeliveryFee(val);
+  };
+
+  const getDisplayFee = () => {
+    if (!deliveryFee) return '';
+    return (parseInt(deliveryFee) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
   };
 
   const selectAddress = (suggestion: AddressSuggestion) => {
@@ -196,10 +215,11 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
 
     setIsSubmitting(true);
     const fullDestination = streetNumber ? `${addressQuery}, ${streetNumber}` : addressQuery;
+    const feeValue = deliveryFee ? parseInt(deliveryFee) / 100 : 0;
     
     try {
-        await onStartDelivery(orderId, fullDestination);
-        setOrderId(''); setAddressQuery(''); setStreetNumber(''); setIsFormOpen(false);
+        await onStartDelivery(orderId, fullDestination, feeValue);
+        setOrderId(''); setAddressQuery(''); setStreetNumber(''); setDeliveryFee(''); setIsFormOpen(false);
     } catch (error) {
         console.error("Error adding to route:", error);
     } finally {
@@ -236,8 +256,6 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
     // Detecta iOS (iPhone/iPad)
     else if (/iPad|iPhone|iPod/.test(userAgent) && !(window as any).MSStream) {
       // Tenta abrir o app do Google Maps diretamente (esquema comgooglemaps://)
-      // Se não tiver o app, isso pode falhar silenciosamente dependendo do navegador,
-      // mas é a forma correta de evitar a página web intermediária.
       window.location.href = `comgooglemaps://?daddr=${destination}&directionsmode=driving`;
     } 
     // Desktop ou Outros
@@ -251,6 +269,7 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
   };
 
   const formatTime = (isoString: string | null) => isoString ? new Date(isoString).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '-';
+  const formatCurrency = (val?: number) => val ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val) : '';
 
   const todaysDeliveries = useMemo(() => deliveries.filter(d => new Date().toDateString() === new Date(d.delivered_at || '').toDateString()), [deliveries]);
 
@@ -258,11 +277,28 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
     if (todaysDeliveries.length === 0) return;
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
-    const tableColumns = ["Nº Pedido", "Endereço", "Início da Rota", "Entrega"];
-    const tableRows = todaysDeliveries.map(d => [`#${d.order_id}`, d.address, formatTime(d.start_time), formatTime(d.delivered_at)]);
+    const tableColumns = ["Nº Pedido", "Endereço", "Taxa", "Início", "Fim"];
+    const tableRows = todaysDeliveries.map(d => [
+      `#${d.order_id}`, 
+      d.address,
+      d.delivery_fee ? formatCurrency(d.delivery_fee) : '-',
+      formatTime(d.start_time), 
+      formatTime(d.delivered_at)
+    ]);
     const date = new Date().toLocaleDateString('pt-BR');
+    
+    // Calculate total fees
+    const totalFees = todaysDeliveries.reduce((acc, curr) => acc + (curr.delivery_fee || 0), 0);
+    
     doc.text(`Relatório de Entregas - ${date} - ${driverName}`, 14, 20);
-    (doc as any).autoTable({ startY: 30, head: [tableColumns], body: tableRows, theme: 'grid' });
+    (doc as any).autoTable({ 
+      startY: 30, 
+      head: [tableColumns], 
+      body: tableRows, 
+      theme: 'grid',
+      foot: [['Total', '', formatCurrency(totalFees), '', '']],
+      footStyles: { fillColor: [220, 220, 220], textColor: [0, 0, 0], fontStyle: 'bold' }
+    });
     doc.save(`relatorio-entregas-${driverName}-${date.replace(/\//g, '-')}.pdf`);
   };
 
@@ -289,6 +325,11 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
                       <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest">Aguardando Retorno</h2>
                       <h1 className="text-2xl font-black text-gray-900 leading-tight">{focusedDelivery.address}</h1>
                       <p className="text-lg font-medium text-brand-600">Pedido #{focusedDelivery.order_id}</p>
+                      {focusedDelivery.delivery_fee && focusedDelivery.delivery_fee > 0 && (
+                        <p className="text-sm font-bold text-gray-500 bg-gray-100 py-1 px-3 rounded-full inline-block">
+                          Receber: {formatCurrency(focusedDelivery.delivery_fee)}
+                        </p>
+                      )}
                   </div>
 
                   <div className="w-full max-w-xs pt-8">
@@ -345,8 +386,19 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
                   <div key={delivery.id} className="bg-white rounded-xl shadow-sm border border-blue-100 overflow-hidden relative">
                      <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-500"></div>
                      <div className="p-4">
-                        <div className="flex justify-between items-start mb-2"><span className="bg-blue-50 text-blue-700 text-xs font-bold px-2 py-1 rounded-md">Pedido #{delivery.order_id}</span><span className="text-xs text-gray-400 font-medium flex items-center gap-1"><Clock className="w-3 h-3" /> {formatTime(delivery.start_time)}</span></div>
+                        <div className="flex justify-between items-start mb-2">
+                          <span className="bg-blue-50 text-blue-700 text-xs font-bold px-2 py-1 rounded-md">Pedido #{delivery.order_id}</span>
+                          <span className="text-xs text-gray-400 font-medium flex items-center gap-1"><Clock className="w-3 h-3" /> {formatTime(delivery.start_time)}</span>
+                        </div>
                         <p className="text-gray-900 font-bold text-lg leading-tight mb-1">{delivery.address}</p>
+                        
+                        {delivery.delivery_fee && delivery.delivery_fee > 0 && (
+                           <div className="mt-2 flex items-center gap-1 text-sm font-bold text-green-600">
+                             <DollarSign className="w-4 h-4" />
+                             Taxa: {formatCurrency(delivery.delivery_fee)}
+                           </div>
+                        )}
+
                         <div className="grid grid-cols-2 gap-3 mt-4">
                             <button onClick={() => handleOpenGPS(delivery)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors active:scale-[0.98]"><Navigation className="w-4 h-4" />Abrir GPS</button>
                             <button onClick={() => onConfirmDelivery(delivery.id)} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors active:scale-[0.98]"><CheckCircle2 className="w-4 h-4" />Entregue</button>
@@ -381,6 +433,19 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
                   <label className="block text-sm font-bold text-gray-700 mb-1">Nº do Pedido</label>
                   <input type="text" value={orderId} onChange={(e) => setOrderId(e.target.value)} placeholder="Ex: 123" className="w-full px-4 py-3 rounded-xl border border-gray-300 bg-white text-gray-900 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-colors text-lg" />
                 </div>
+                
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">Valor da Taxa (R$)</label>
+                  <input 
+                    type="text" 
+                    inputMode="numeric"
+                    value={getDisplayFee()} 
+                    onChange={handleFeeChange} 
+                    placeholder="0,00" 
+                    className="w-full px-4 py-3 rounded-xl border border-gray-300 bg-white text-gray-900 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-colors text-lg" 
+                  />
+                </div>
+
                 <div ref={wrapperRef} className="relative">
                   <label className="block text-sm font-bold text-gray-700 mb-1">Endereço (Rua ou CEP)</label>
                   <div className="relative">
@@ -428,7 +493,23 @@ export const DriverDashboard: React.FC<DriverDashboardProps> = ({
             <h3 className="font-bold text-gray-400 text-sm uppercase">Finalizadas Hoje</h3>
             {todaysDeliveries.length > 0 && (<button onClick={generatePDF} className="text-xs font-bold bg-white text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition-colors border border-gray-200 flex items-center gap-1.5"><Download className="w-3.5 h-3.5" />Baixar Relatório</button>)}
           </div>
-          {todaysDeliveries.length === 0 ? (<div className="text-center py-6 bg-transparent"><p className="text-gray-400 text-xs">Nenhuma entrega finalizada hoje.</p></div>) : (<div className="space-y-3">{todaysDeliveries.slice(0, 5).map((delivery) => (<div key={delivery.id} className="bg-white p-3 rounded-lg border border-gray-100 flex justify-between items-center"><div><div className="flex items-center gap-2 mb-1"><span className="font-bold text-gray-700 text-sm">#{delivery.order_id}</span><CheckCircle2 className="w-3 h-3 text-green-500" /></div><p className="text-[10px] text-gray-400 truncate max-w-[200px]">{delivery.address}</p></div><div className="text-right"><span className="text-[10px] text-gray-400 font-mono">{formatTime(delivery.delivered_at)}</span></div></div>))}</div>)}
+          {todaysDeliveries.length === 0 ? (<div className="text-center py-6 bg-transparent"><p className="text-gray-400 text-xs">Nenhuma entrega finalizada hoje.</p></div>) : (<div className="space-y-3">{todaysDeliveries.slice(0, 5).map((delivery) => (
+            <div key={delivery.id} className="bg-white p-3 rounded-lg border border-gray-100 flex justify-between items-center">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-bold text-gray-700 text-sm">#{delivery.order_id}</span>
+                  <CheckCircle2 className="w-3 h-3 text-green-500" />
+                </div>
+                <p className="text-[10px] text-gray-400 truncate max-w-[200px]">{delivery.address}</p>
+                {delivery.delivery_fee && delivery.delivery_fee > 0 && (
+                   <span className="text-[10px] font-bold text-green-600">Taxa: {formatCurrency(delivery.delivery_fee)}</span>
+                )}
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] text-gray-400 font-mono">{formatTime(delivery.delivered_at)}</span>
+              </div>
+            </div>
+          ))}</div>)}
         </div>
 
         {/* Cancel Confirmation Modal */}
