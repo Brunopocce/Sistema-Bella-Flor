@@ -13,9 +13,12 @@ export const LoginScreen: React.FC = () => {
     setLoading(true);
 
     let email;
-    if (password === '123456') {
+    // Invertido conforme solicitação:
+    // Admin: 236616
+    // Driver: 123456
+    if (password === '236616') {
       email = 'admin@bellaflor.com';
-    } else if (password === '236616') {
+    } else if (password === '123456') {
       email = 'driver@bellaflor.com';
     } else {
       setError('Senha incorreta.');
@@ -29,17 +32,31 @@ export const LoginScreen: React.FC = () => {
     });
 
     if (signInError) {
+      // Auto-Sign Up logic for first time use or database reset
       if (signInError.message.includes('Invalid login credentials')) {
-         setError('Senha incorreta ou usuário não cadastrado no sistema.');
+         console.log("Tentando auto-cadastro...");
+         const { error: signUpError } = await supabase.auth.signUp({
+            email,
+            password,
+            options: {
+                data: {
+                    role: email.includes('admin') ? 'admin' : 'driver'
+                }
+            }
+         });
+         
+         if (signUpError) {
+             setError('Erro ao criar usuário: ' + signUpError.message);
+         } else {
+             // Auto login after sign up often requires email confirmation disabled in Supabase, 
+             // but if session is created, App.tsx will catch it.
+         }
       } else {
          setError('Ocorreu um erro ao tentar fazer login.');
       }
       console.error("Supabase sign-in error:", signInError);
     }
     
-    // O App.tsx vai reagir à mudança de estado de autenticação.
-    // Não é mais necessário chamar um callback onLogin.
-
     setLoading(false);
   };
 
@@ -69,7 +86,8 @@ export const LoginScreen: React.FC = () => {
                   disabled={loading}
                 />
                 <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
-                  {password === '236616' ? <Truck className="w-5 h-5 text-brand-500" /> : <Lock className="w-5 h-5" />}
+                  {/* Ícone muda baseado na senha digitada */}
+                  {password === '123456' ? <Truck className="w-5 h-5 text-brand-500" /> : <Lock className="w-5 h-5" />}
                 </div>
               </div>
             </div>
